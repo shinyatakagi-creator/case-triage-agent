@@ -1,0 +1,8 @@
+.DS_Store
+.venv/
+.env
+data/
+__pycache__/
+.pytest_cache/
+.claude/settings.local.json
+kickoff-prompt.md

@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m pytest:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(ls:*)"
+    ],
+    "deny": [
+      "mcp__computer-use",
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Edit(./.env)",
+      "Edit(./data/eval/**)",
+      "Bash(git push:*)",
+      "Bash(env:*)",
+      "Bash(printenv:*)",
+      "Bash(wget:*)",
+      "Bash(sudo:*)",
+      "Bash(rm -rf:*)",
+      "Bash(docker compose down:*)",
+      "Bash(docker volume:*)",
+      "Bash(docker system:*)"
+    ]
+  }
+}
