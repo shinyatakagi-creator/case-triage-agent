@@ -114,7 +114,7 @@ Not verified:
 - `MAX_PLAUSIBLE_TOKENS` (10**7) and `MAX_TOOL_CALLS` (8) are chosen, not measured.
 - The spend-ledger lock was tested by the reviewer with 4 processes, not under real load.
 - The agent, the baseline and the eval harness have not run on a real issue or on any labelled case.
-- The unanswerable pool has not been pulled.
+- Candidate pulls for the unanswerable pool exist (bug+support 60, bug 40, feature 40, as script counts), but no issue has been read, selected or labelled, so the 15 unanswerable cases are not chosen yet.
 - Whether the docs index (kubernetes/website 6c42e266) predates the pulled issues enough to mislabel answerable cases.
 - Elastic Cloud trial terms and pricing (not chosen; fallback only).
 - Whether in-process retrieval matches the Elasticsearch numbers (parity check, evening 7).
