@@ -2,8 +2,8 @@
 import json
 
 import pytest
+from agent_helpers import SRC, URL, FakeLLM, FakeTools, final, fx, turn
 
-from test_agent import SRC, URL, FakeLLM, FakeTools, final, fx, turn, use
 from triage.baseline import QUERY_BODY_CHARS, build_query, run_baseline
 from triage.contracts import contract_problems
 from triage.llm import Ledger
@@ -24,6 +24,7 @@ def test_one_search_one_model_call(ledger):
     assert contract_problems(n, res["search_results"]) == []
     assert [c["source"] for c in n["citations"]] == [SRC]
     assert res["search_results"][0]["cache_hit"] is True
+    assert ledger.run_usd == pytest.approx(n["cost_usd"])
 
 
 def test_query_is_deterministic_title_plus_truncated_body(ledger):
@@ -50,11 +51,31 @@ def test_baseline_thread_error_makes_no_model_call(ledger):
     assert res["note"]["outcome"] == "error" and llm.seen == []
 
 
+def test_baseline_does_not_retry_timeouts(ledger):
+    t = FakeTools(search_docs=[{"error": "timeout"}, fx("search.json")])
+    llm = FakeLLM([final()])
+    res = run_baseline(URL, t, llm, ledger)
+    assert [n for n, _ in t.calls] == ["get_issue_thread", "search_docs"]  # exactly one search
+    assert res["note"]["outcome"] == "error" and llm.seen == [] and "search_docs" in res["reason"]
+
+
+@pytest.mark.parametrize("bad", [{"error": "search_failed"}, {"nope": 1}])
+def test_baseline_search_failure_is_error_without_model_call(ledger, bad):
+    llm = FakeLLM([final()])
+    res = run_baseline(URL, FakeTools(search_docs=[bad]), llm, ledger)
+    assert res["note"]["outcome"] == "error" and llm.seen == []
+
+
+def test_baseline_empty_search_still_asks_model(ledger):
+    llm = FakeLLM([final("cant_tell", citations=[])])
+    res = run_baseline(URL, FakeTools(search_docs=[fx("search_empty.json")]), llm, ledger)
+    assert res["note"]["outcome"] == "cant_tell" and len(llm.seen) == 1
+
+
 def test_baseline_prompt_has_only_returned_thread(ledger):
     llm = FakeLLM([final("cant_tell", citations=[])])
     run_baseline(URL, FakeTools(), llm, ledger)
-    sent = json.loads(llm.seen[0][0]["content"])
-    assert sent["thread"] == fx("thread.json")
+    assert json.loads(llm.seen[0][0]["content"])["thread"] == fx("thread.json")
 
 
 def test_baseline_cap_stops_before_call(tmp_path):

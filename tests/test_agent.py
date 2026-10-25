@@ -1,71 +1,13 @@
 """Agent loop tests: fake LLM with scripted turns, fake tools returning synthetic fixtures. No live calls."""
-import copy
 import json
-from pathlib import Path
 
 import pytest
+from agent_helpers import SRC, URL, FakeLLM, FakeTools, final, fx, turn, use
 
-from triage.agent import run_agent
-from triage.contracts import MAX_STEPS, contract_problems
+from triage import agent
+from triage.agent import MAX_TOOL_CALLS, run_agent
+from triage.contracts import MAX_STEPS, Comment, IssueThread, Passage, SearchResult, Signals, TriageNote, contract_problems
 from triage.llm import DEFAULT_MODEL, Ledger
-
-FIX = Path(__file__).parent / "fixtures" / "agent"
-URL = "https://github.com/kubernetes/kubernetes/issues/1"
-SRC = "docs/invented/widgets.md"
-
-
-def fx(name):
-    return json.loads((FIX / name).read_text())
-
-
-def turn(*blocks, i=100, o=50):
-    return {"content": list(blocks), "input_tokens": i, "output_tokens": o}
-
-
-def use(name, id="t", **inp):
-    return {"type": "tool_use", "id": id, "name": name, "input": inp}
-
-
-def final(outcome="answered", citations=(SRC,), **kw):
-    return turn(use("final_answer", outcome=outcome, citations=list(citations),
-                    likely_cause="cause", next_step="step", **kw))
-
-
-class FakeLLM:
-    model = DEFAULT_MODEL
-
-    def __init__(self, turns):
-        self.turns, self.seen = list(turns), []
-
-    def complete(self, system, messages, tools):
-        self.seen.append(copy.deepcopy(messages))
-        return self.turns.pop(0)
-
-
-class FakeTools:
-    """responses: tool -> list of results returned in order (the last one repeats)."""
-
-    def __init__(self, **responses):
-        self.responses = {"search_docs": [fx("search.json")], "get_issue_thread": [fx("thread.json")],
-                          "extract_error_signals": [fx("signals.json")], **responses}
-        self.calls = []
-
-    def _next(self, name, args):
-        self.calls.append((name, args))
-        q = self.responses[name]
-        r = q.pop(0) if len(q) > 1 else q[0]
-        if isinstance(r, Exception):
-            raise r
-        return r
-
-    def search_docs(self, query, k=5):
-        return self._next("search_docs", query)
-
-    def get_issue_thread(self, issue_url):
-        return self._next("get_issue_thread", issue_url)
-
-    def extract_error_signals(self, text):
-        return self._next("extract_error_signals", text)
 
 
 @pytest.fixture
@@ -73,12 +15,12 @@ def ledger(tmp_path):
     return Ledger(per_run_cap=1.0, per_day_cap=10.0, path=tmp_path / "spend.json")
 
 
-def names(res):
-    return [c["tool"] for c in res["note"]["tool_calls"]]
+def search_turn(q="q", id="s"):
+    return turn(use("search_docs", id=id, query=q))
 
 
 def test_happy_path_valid_citation(ledger):
-    llm = FakeLLM([turn(use("get_issue_thread")), turn(use("search_docs", query="widgets")), final()])
+    llm = FakeLLM([turn(use("get_issue_thread")), search_turn("widgets"), final()])
     res = run_agent(URL, FakeTools(), llm, ledger, categories=["scheduling", "other"])
     n = res["note"]
     assert n["outcome"] == "answered" and n["steps"] == 3
@@ -86,7 +28,32 @@ def test_happy_path_valid_citation(ledger):
     assert n["category"] is None  # model gave none
     assert contract_problems(n, res["search_results"]) == []
     assert n["cost_usd"] == pytest.approx(0.0001 + 3 * (100 * 1.0 + 50 * 5.0) / 1e6)
-    assert names(res) == ["get_issue_thread", "search_docs"]
+    assert ledger.run_usd == pytest.approx(n["cost_usd"])  # model + search both counted
+    assert [c["tool"] for c in n["tool_calls"]] == ["get_issue_thread", "search_docs"]
+
+
+def test_final_answer_on_last_allowed_turn(ledger):
+    llm = FakeLLM([search_turn(id=f"s{i}") for i in range(MAX_STEPS - 1)] + [final()])
+    res = run_agent(URL, FakeTools(), llm, ledger)
+    assert res["note"]["outcome"] == "answered" and res["note"]["steps"] == MAX_STEPS
+
+
+def test_multi_block_turn_runs_all_and_returns_all_results(ledger):
+    t = FakeTools()
+    llm = FakeLLM([turn(use("get_issue_thread", id="a"), use("search_docs", id="b", query="q"),
+                        use("extract_error_signals", id="c", text="x")), final()])
+    res = run_agent(URL, t, llm, ledger)
+    assert res["note"]["outcome"] == "answered"
+    results = llm.seen[1][-1]["content"]
+    assert [r["tool_use_id"] for r in results] == ["a", "b", "c"]
+    assert [n for n, _ in t.calls] == ["get_issue_thread", "search_docs", "extract_error_signals"]
+
+
+def test_final_answer_wins_over_other_blocks_in_same_turn(ledger):
+    t = FakeTools()
+    llm = FakeLLM([turn(use("search_docs", query="q"), use("final_answer", outcome="cant_tell"))])
+    res = run_agent(URL, t, llm, ledger)
+    assert res["note"]["outcome"] == "cant_tell" and t.calls == []
 
 
 def test_category_only_from_provided_list(ledger):
@@ -95,37 +62,34 @@ def test_category_only_from_provided_list(ledger):
         assert run_agent(URL, FakeTools(), llm, ledger, cats)["note"]["category"] == expect
 
 
-def test_invented_citation_flagged_and_dropped(ledger):
-    # contract_problems itself flags it...
-    ok = run_agent(URL, FakeTools(), FakeLLM([turn(use("search_docs", query="q")), final()]), ledger)["note"]
-    bad = {**ok, "citations": [{"source": "docs/made/up.md"}]}
-    assert any("not returned" in p for p in contract_problems(bad, run_search_results()))
-    # ...and the agent never lets one into the note
-    llm = FakeLLM([turn(use("search_docs", query="q")), final(citations=[SRC, "docs/made/up.md"])])
+def test_contract_problems_flags_invented_citation():
+    note = TriageNote(issue_url=URL, outcome="answered", category=None, likely_cause="c",
+                      citations=[{"source": "docs/made/up.md"}], next_step="n", steps=1, cost_usd=0.0, tool_calls=[])
+    problems = contract_problems(note, [fx("search.json")])
+    assert len(problems) == 1 and "docs/made/up.md" in problems[0]
+
+
+def test_agent_drops_invented_citation_and_reports_it(ledger):
+    llm = FakeLLM([search_turn(), final(citations=[SRC, "docs/made/up.md"])])
     res = run_agent(URL, FakeTools(), llm, ledger)
     assert res["dropped_citations"] == ["docs/made/up.md"]
     assert [c["source"] for c in res["note"]["citations"]] == [SRC]
     assert contract_problems(res["note"], res["search_results"]) == []
 
 
-def run_search_results():
-    return [fx("search.json")]
-
-
 def test_only_invented_citation_is_error(ledger):
-    llm = FakeLLM([turn(use("search_docs", query="q")), final(citations=["docs/made/up.md"])])
+    llm = FakeLLM([search_turn(), final(citations=["docs/made/up.md"])])
     res = run_agent(URL, FakeTools(), llm, ledger)
     assert res["note"]["outcome"] == "error" and res["note"]["citations"] == []
     assert res["dropped_citations"] == ["docs/made/up.md"]
 
 
 def test_answered_without_any_search_is_error(ledger):
-    res = run_agent(URL, FakeTools(), FakeLLM([final()]), ledger)
-    assert res["note"]["outcome"] == "error"
+    assert run_agent(URL, FakeTools(), FakeLLM([final()]), ledger)["note"]["outcome"] == "error"
 
 
 def test_step_cap(ledger):
-    llm = FakeLLM([turn(use("search_docs", query=f"q{i}")) for i in range(MAX_STEPS + 3)])
+    llm = FakeLLM([search_turn(f"q{i}", id=f"s{i}") for i in range(MAX_STEPS + 3)])
     tools = FakeTools()
     res = run_agent(URL, tools, llm, ledger)
     assert res["note"]["outcome"] == "step_cap" and res["note"]["steps"] == MAX_STEPS
@@ -140,19 +104,23 @@ def test_cant_tell(ledger):
 
 def test_timeout_retried_once_then_succeeds(ledger):
     t = FakeTools(search_docs=[{"error": "timeout", "tool": "search_docs"}, fx("search.json")])
-    llm = FakeLLM([turn(use("search_docs", query="q")), final()])
-    res = run_agent(URL, t, llm, ledger)
+    res = run_agent(URL, t, FakeLLM([search_turn(), final()]), ledger)
     assert res["note"]["outcome"] == "answered" and len(t.calls) == 2
     assert res["note"]["tool_calls"] == [{"tool": "search_docs", "ok": False}, {"tool": "search_docs", "ok": True}]
 
 
-def test_timeout_twice_degrades_and_is_not_called_again(ledger):
+def test_timeout_twice_degrades_not_called_again_and_cant_tell_becomes_error(ledger):
     t = FakeTools(search_docs=[{"error": "timeout"}])
-    llm = FakeLLM([turn(use("search_docs", query="a")), turn(use("search_docs", query="b")),
-                   final("cant_tell", citations=[])])
+    llm = FakeLLM([search_turn("a"), search_turn("b"), final("cant_tell", citations=[])])
     res = run_agent(URL, t, llm, ledger)
     assert len(t.calls) == 2  # one call + one retry; the second model request never reaches the tool
-    assert res["note"]["outcome"] == "cant_tell"
+    assert res["note"]["outcome"] == "error" and "search_docs" in res["reason"]
+
+
+def test_cant_tell_ok_if_failed_tool_later_recovered(ledger):
+    t = FakeTools(extract_error_signals=[{"error": "search_failed"}], get_issue_thread=[fx("thread.json")])
+    llm = FakeLLM([turn(use("extract_error_signals", text="x")), final("cant_tell", citations=[])])
+    assert run_agent(URL, t, llm, ledger)["note"]["outcome"] == "error"  # last result of that tool was an error
 
 
 @pytest.mark.parametrize("kind", ["rate_limited", "bad_url", "not_found", "not_an_issue"])
@@ -164,29 +132,109 @@ def test_fatal_errors_not_retried(ledger, kind):
     assert len(t.calls) == 1 and len(llm.seen) == 1
 
 
+def test_fatal_error_short_circuits_rest_of_turn(ledger):
+    t = FakeTools(get_issue_thread=[{"error": "rate_limited"}])
+    llm = FakeLLM([turn(*[use("get_issue_thread", id=f"g{i}") for i in range(3)])])
+    res = run_agent(URL, t, llm, ledger)
+    assert len(t.calls) == 1 and res["note"]["outcome"] == "error"
+
+
+def test_tool_call_budget_with_50_block_turn(ledger):
+    t = FakeTools()
+    llm = FakeLLM([turn(*[use("search_docs", id=f"s{i}", query=f"q{i}") for i in range(50)]),
+                   final("cant_tell", citations=[])])
+    res = run_agent(URL, t, llm, ledger)
+    assert len(t.calls) == MAX_TOOL_CALLS == 8
+    results = llm.seen[1][-1]["content"]
+    assert len(results) == 50 and sum(r["is_error"] for r in results) == 50 - MAX_TOOL_CALLS
+    assert res["note"]["outcome"] == "cant_tell"  # refusals are not a tool's own result
+    assert len(res["note"]["tool_calls"]) == MAX_TOOL_CALLS
+
+
 def test_empty_search_then_reformulate(ledger):
     t = FakeTools(search_docs=[fx("search_empty.json"), fx("search.json")])
-    llm = FakeLLM([turn(use("search_docs", query="a")), turn(use("search_docs", query="b")), final()])
-    res = run_agent(URL, t, llm, ledger)
+    res = run_agent(URL, t, FakeLLM([search_turn("a"), search_turn("b"), final()]), ledger)
     assert res["note"]["outcome"] == "answered" and [q for _, q in t.calls] == ["a", "b"]
 
 
-@pytest.mark.parametrize("bad", [{"nope": 1}, "text", None, {"passages": [{"text": "x"}], "cost_usd": 0,
-                                                              "latency_ms": 0, "cache_hit": False}])
-def test_malformed_tool_output_is_error_result(ledger, bad):
+def _bad_search(**over):
+    return {**fx("search.json"), **over}
+
+
+def _bad_passage(**over):
+    s = fx("search.json")
+    s["passages"][0].update(over)
+    return s
+
+
+@pytest.mark.parametrize("bad", [
+    {"nope": 1}, "text", None, {**fx("search.json"), "passages": [{"text": "x"}]},
+    _bad_search(cost_usd=None), _bad_search(cost_usd="x"), _bad_search(cost_usd=float("nan")),
+    _bad_search(cost_usd=float("inf")), _bad_search(cost_usd=-1), _bad_search(cost_usd=True),
+    _bad_search(latency_ms="1"), _bad_search(cache_hit="yes"), _bad_search(cache_hit=1),
+    _bad_search(passages="abc"), _bad_search(passages=["abc"]),
+    _bad_passage(source=["a"]), _bad_passage(text=None), _bad_passage(score="0.1"),
+    _bad_passage(score=float("nan")),
+])
+def test_malformed_search_output_is_error_result(ledger, bad):
     t = FakeTools(search_docs=[bad])
-    llm = FakeLLM([turn(use("search_docs", query="q")), final("cant_tell", citations=[])])
+    llm = FakeLLM([search_turn(), final("cant_tell", citations=[])])
     res = run_agent(URL, t, llm, ledger)
     assert res["note"]["tool_calls"] == [{"tool": "search_docs", "ok": False}]
-    assert res["search_results"] == [] and res["note"]["outcome"] == "cant_tell"
+    assert res["search_results"] == [] and res["note"]["cost_usd"] == pytest.approx(2 * 350 / 1e6)
     sent = llm.seen[1][-1]["content"][0]
     assert sent["is_error"] and "malformed" in sent["content"]
 
 
+@pytest.mark.parametrize("bad", [
+    {**fx("thread.json"), "number": "1"}, {**fx("thread.json"), "labels": "x"},
+    {**fx("thread.json"), "comments": ["x"]}, {**fx("thread.json"), "comments": [{"author": 1, "created_at": "", "body": ""}]},
+    {**fx("thread.json"), "thread_truncated": "no"}, {**fx("thread.json"), "body": None},
+])
+def test_malformed_thread_output_is_error(ledger, bad):
+    llm = FakeLLM([turn(use("get_issue_thread")), final("cant_tell", citations=[])])
+    res = run_agent(URL, FakeTools(get_issue_thread=[bad]), llm, ledger)
+    assert res["note"]["tool_calls"] == [{"tool": "get_issue_thread", "ok": False}]
+    assert res["note"]["outcome"] == "error"
+
+
+@pytest.mark.parametrize("bad", [{"versions": "v1", "k8s_reasons": [], "error_lines": [], "stack_traces": []},
+                                 {"versions": [1], "k8s_reasons": [], "error_lines": [], "stack_traces": []}, {}])
+def test_malformed_signals_output_is_error(ledger, bad):
+    llm = FakeLLM([turn(use("extract_error_signals", text="x")), final("cant_tell", citations=[])])
+    res = run_agent(URL, FakeTools(extract_error_signals=[bad]), llm, ledger)
+    assert res["note"]["tool_calls"] == [{"tool": "extract_error_signals", "ok": False}]
+
+
+def test_validators_match_contract_keys():
+    assert set(agent.PASSAGE_SPEC) == set(Passage.__required_keys__)
+    assert set(agent.SEARCH_SPEC) == set(SearchResult.__required_keys__)
+    assert set(agent.COMMENT_SPEC) == set(Comment.__required_keys__)
+    assert set(agent.THREAD_SPEC) == set(IssueThread.__required_keys__)
+    assert set(agent.SIGNALS_SPEC) == set(Signals.__required_keys__)
+
+
 def test_tool_that_raises_does_not_crash(ledger):
     t = FakeTools(search_docs=[RuntimeError("boom")])
-    llm = FakeLLM([turn(use("search_docs", query="q")), final("cant_tell", citations=[])])
-    assert run_agent(URL, t, llm, ledger)["note"]["outcome"] == "cant_tell"
+    llm = FakeLLM([search_turn(), final("cant_tell", citations=[])])
+    assert run_agent(URL, t, llm, ledger)["note"]["outcome"] == "error"  # cant_tell after a failed tool
+
+
+def test_block_without_id_and_non_dict_blocks_do_not_crash(ledger):
+    noid = {"type": "tool_use", "name": "search_docs", "input": {"query": "q"}}
+    llm = FakeLLM([turn("junk", None, noid, 5), final()])
+    res = run_agent(URL, FakeTools(), llm, ledger)
+    assert res["note"]["outcome"] == "answered"
+    assert llm.seen[1][-1]["content"][0]["tool_use_id"] == "missing-id-2"
+    assert [b["id"] for b in llm.seen[1][1]["content"] if b.get("type") == "tool_use"] == ["missing-id-2"]
+
+
+def test_unknown_tool_and_bad_input_do_not_crash(ledger):
+    llm = FakeLLM([turn({"type": "tool_use", "id": "x", "name": 7, "input": "zzz"},
+                        use("nonexistent", id="y")), final("cant_tell", citations=[])])
+    res = run_agent(URL, FakeTools(), llm, ledger)
+    assert res["note"]["outcome"] == "cant_tell"
+    assert all(r["is_error"] for r in llm.seen[1][-1]["content"])
 
 
 def test_per_run_cap_stops_before_call(tmp_path):
@@ -194,13 +242,19 @@ def test_per_run_cap_stops_before_call(tmp_path):
     llm = FakeLLM([turn(use("search_docs", query="q"), i=1000, o=1000), final()])
     res = run_agent(URL, FakeTools(), llm, led)
     assert res["note"]["outcome"] == "error" and "per-run cap" in res["reason"]
-    assert len(llm.seen) == 1  # second call never made
+    assert len(llm.seen) == 1
+
+
+def test_search_cost_counts_toward_run_cap(tmp_path):
+    led = Ledger(per_run_cap=0.00005, per_day_cap=10.0, path=tmp_path / "s.json")
+    llm = FakeLLM([turn(use("search_docs", query="q"), i=0, o=0), final()])  # model free; search 0.0001
+    res = run_agent(URL, FakeTools(), llm, led)
+    assert "per-run cap" in res["reason"] and len(llm.seen) == 1
 
 
 def test_per_day_cap_persisted_stops_before_first_call(tmp_path):
     p = tmp_path / "s.json"
-    first = Ledger(per_run_cap=1, per_day_cap=0.001, path=p)
-    first.charge(DEFAULT_MODEL, 1000, 1000)  # 0.006 USD, over the day cap
+    Ledger(per_run_cap=1, per_day_cap=0.001, path=p).charge(DEFAULT_MODEL, 1000, 1000)  # 0.006 USD
     llm = FakeLLM([final()])
     res = run_agent(URL, FakeTools(), llm, Ledger(per_run_cap=1, per_day_cap=0.001, path=p))
     assert res["note"]["outcome"] == "error" and "per-day cap" in res["reason"] and llm.seen == []
@@ -214,21 +268,38 @@ def test_unreadable_spend_file_fails_closed(tmp_path):
     assert res["note"]["outcome"] == "error" and llm.seen == []
 
 
+def test_failed_spend_write_keeps_cost_and_stops(tmp_path, monkeypatch):
+    led = Ledger(per_run_cap=1, per_day_cap=10, path=tmp_path / "s.json")
+    monkeypatch.setattr("triage.llm.os.replace", lambda *a: (_ for _ in ()).throw(OSError("disk full")))
+    llm = FakeLLM([search_turn(), final()])
+    res = run_agent(URL, FakeTools(), llm, led)
+    assert res["note"]["outcome"] == "error" and "spend ledger write failed" in res["reason"]
+    assert res["note"]["cost_usd"] == pytest.approx(350 / 1e6)  # the paid call is still in the note
+    assert len(llm.seen) == 1
+
+
+@pytest.mark.parametrize("bad", [{"content": [], "output_tokens": 50}, {"content": [], "input_tokens": 100},
+                                 {"content": [], "input_tokens": "x", "output_tokens": 50},
+                                 {"content": [], "input_tokens": float("nan"), "output_tokens": 50}])
+def test_missing_token_counts_is_error_but_known_cost_counted(ledger, bad):
+    res = run_agent(URL, FakeTools(), FakeLLM([bad]), ledger)
+    assert res["note"]["outcome"] == "error" and "token counts" in res["reason"]
+    assert res["note"]["cost_usd"] > 0 and res["note"]["steps"] == 1
+
+
 def test_cache_hit_carried_through(ledger):
-    miss = {**fx("search.json"), "cache_hit": False}
-    t = FakeTools(search_docs=[fx("search.json"), miss])
-    llm = FakeLLM([turn(use("search_docs", query="a")), turn(use("search_docs", query="b")), final()])
-    res = run_agent(URL, t, llm, ledger)
+    t = FakeTools(search_docs=[fx("search.json"), {**fx("search.json"), "cache_hit": False}])
+    res = run_agent(URL, t, FakeLLM([search_turn("a"), search_turn("b"), final()]), ledger)
     assert [r["cache_hit"] for r in res["search_results"]] == [True, False]
 
 
 def test_model_only_sees_what_the_thread_tool_returned(ledger):
     """Leakage: the agent never fetches comments itself; the model gets only the tool's output."""
-    llm = FakeLLM([turn(use("get_issue_thread", issue_url="https://github.com/other/repo/issues/9")), final("cant_tell", citations=[])])
+    llm = FakeLLM([turn(use("get_issue_thread", issue_url="https://github.com/other/repo/issues/9")),
+                   final("cant_tell", citations=[])])
     t = FakeTools()
     run_agent(URL, t, llm, ledger)
     assert t.calls == [("get_issue_thread", URL)]  # model-supplied URL is ignored
     msgs = llm.seen[1]
     assert msgs[0]["content"] == f"Triage this issue: {URL}"
     assert msgs[2]["content"][0]["content"] == json.dumps(fx("thread.json"))
-    assert "SYNTHETIC-COMMENT-9c1d" in msgs[2]["content"][0]["content"]  # only the returned comment, nothing else
