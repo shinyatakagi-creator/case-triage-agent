@@ -1,0 +1,4 @@
+{"id": "fake-1", "issue_url": "https://github.com/kubernetes/kubernetes/issues/1", "answerable": true, "category": "A", "gold_docs": ["fake/doc-one"]}
+{"id": "fake-2", "issue_url": "https://github.com/kubernetes/kubernetes/issues/2", "answerable": true, "category": "B", "gold_docs": ["fake/doc-two", "fake/doc-three"], "notes": "two gold pages"}
+{"id": "fake-3", "issue_url": "https://github.com/kubernetes/kubernetes/issues/3", "answerable": true, "category": "A", "gold_docs": ["fake/doc-four"]}
+{"id": "fake-4", "issue_url": "https://github.com/kubernetes/kubernetes/issues/4", "answerable": false, "category": "C", "gold_docs": []}
