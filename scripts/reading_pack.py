@@ -4,7 +4,7 @@ Usage (from repo root, env loaded): python -m scripts.reading_pack 141240 135321
 
 Read-only: no model calls, no verdicts, no ranking, no hints. The thread is exactly what
 get_issue_thread returns (cut at the first maintainer reply, bots dropped), so the pack never
-shows more than the agent would see. The docs hits are search_docs(title, hybrid, k=5).
+shows more than the agent would see. The docs hits are search_docs(title, hybrid, k=5); the first 3 also get their full chunk text.
 """
 import re
 import sys
@@ -18,6 +18,7 @@ from triage.thread import fetch_issue
 OUT_DIR = Path("data/pack")
 SNIPPET_CHARS = 200
 TOP_K = 5
+FULL_TEXT_K = 3  # the first 3 of the top-5 hits also get their whole chunk
 ISSUE_URL = "https://github.com/kubernetes/kubernetes/issues/{}"
 
 
@@ -69,6 +70,10 @@ def _docs_section(title: str | None, hits: dict) -> str:
     else:
         for i, p in enumerate(hits["passages"][:TOP_K], 1):
             lines += [f"{i}. `{p['source']}`  ", f"   heading: {p['heading']}  ", f"   {snippet(p['text'])}", ""]
+        lines += [f"## Full text of the top {FULL_TEXT_K} chunks", ""]
+        for i, p in enumerate(hits["passages"][:FULL_TEXT_K], 1):
+            lines += ["<details>", f"<summary>{i}. {p['source']} | {p['heading']}</summary>", "",
+                      fence(p["text"]), "", "</details>", ""]
     return "\n".join(lines) + "\n"
 
 
