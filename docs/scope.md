@@ -84,10 +84,25 @@ Public repo, live endpoint, eval table with counts and the baseline comparison, 
 "Multi-step agent with MCP tool server, deployed, evaluated on 40 labelled cases against a single-shot baseline." Do not add "production" or "users" unless true.
 
 ## Unverified items
-- Number of substantive kind/support threads (evening 1 check).
-- Elastic Cloud trial terms and pricing.
-- Whether in-process retrieval matches the Elasticsearch numbers (parity check on evening 7).
-- Live GitHub calls and the rag-hybrid /search call from the evening-1 code have not been run against the real services (only the unit tests and a local tool listing were run).
+
+Updated 25 Oct.
+
+Verified (RAN):
+- Substantive kind/support pool: 96 of 100 pulled candidates are substantive (see Findings 25 Oct). The 23 threads with no maintainer reply were not hand-checked for a pasted fix.
+- Live GitHub: `scripts.pull_candidates` ran against the real API (listing and comments, read-only token). The `get_issue_thread` MCP tool itself has not been called live.
+- rag-hybrid `/search`: bm25 and hybrid ran live and `search_docs` normalises both to `SearchResult`. Hybrid depends on rag-hybrid's OpenAI key (it was invalid once and was fixed).
+- Agent loop, baseline, ledger and eval harness: 196 unit tests pass, all on fakes and synthetic fixtures.
+- The `anthropic` package is installed and pinned (2.3.0); the adapter constructs a client offline.
+
+Not verified:
+- Any real model call: `AnthropicLLM.complete`, the system prompts, the `final_answer` tool format, and the model ID `claude-haiku-5-5` are untested. Prices and the cap defaults ($0.05 per run, $1.00 per day) are placeholders.
+- `MAX_PLAUSIBLE_TOKENS` (10**7) and `MAX_TOOL_CALLS` (8) are chosen, not measured.
+- The spend-ledger lock was tested by the reviewer with 4 processes, not under real load.
+- The agent, the baseline and the eval harness have not run on a real issue or on any labelled case.
+- The unanswerable pool has not been pulled.
+- Whether the docs index (kubernetes/website 6c42e266) predates the pulled issues enough to mislabel answerable cases.
+- Elastic Cloud trial terms and pricing (not chosen; fallback only).
+- Whether in-process retrieval matches the Elasticsearch numbers (parity check, evening 7).
 
 ## Findings 25 Oct
 
