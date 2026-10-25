@@ -2,6 +2,8 @@
 
 Bootstrap: percentile interval over cases, N_RESAMPLES resamples, fixed SEED, 95%.
 With 40 cases the intervals are wide on purpose; that is the point.
+
+Known limitation (accepted): valid finite costs near 1e308 can sum to inf in the cost totals.
 """
 import math
 import random

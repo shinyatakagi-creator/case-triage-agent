@@ -2,6 +2,13 @@
 
 Definition of "step": ONE MODEL TURN (one llm.complete call that returned). Tool executions
 inside that turn, and the single timeout retry, do not count. MAX_STEPS bounds model turns.
+
+Known limitations (accepted):
+- Malformed model tool calls (non-string query/text, bad k) are not executed and are not recorded in
+  note.tool_calls; the only bound on how many a model can emit is MAX_STEPS turns.
+- A model turn whose token counts are missing or invalid is charged for the known fields only, so
+  its real cost may be under-counted.
+- Cache-token usage fields are ignored (see llm.AnthropicLLM).
 """
 import json
 import math
@@ -44,10 +51,16 @@ class Tools(Protocol):
     def extract_error_signals(self, text: str) -> Signals: ...
 
 
+class InvalidCitation(NamedTuple):
+    type_name: str  # type of the rejected item, e.g. "dict"; the item itself is never kept or str()'d
+
+
 class RunResult(TypedDict):
     note: TriageNote
     search_results: list[SearchResult]
-    dropped_citations: list[str]  # cited but never returned by search_docs; the harness counts these as failures
+    # Cited but never returned by search_docs; the harness counts these as failures. Non-string
+    # citations appear as InvalidCitation, a type no real string can equal.
+    dropped_citations: list[str | InvalidCitation]
     reason: str | None            # why the run ended in "error" (cap, tool error, bad model output)
 
 
@@ -135,6 +148,7 @@ class ToolRunner:
         self.calls: list[ToolCall] = []
         self.search_results: list[SearchResult] = []
         self.search_cost = 0.0
+        self.cost_overflow = False  # search costs summed past the float range
         self.dead: dict[str, ToolError] = {}  # tool -> its terminal error; later calls are not executed
         self.last_error: dict[str, ToolError | None] = {}  # tool -> error of its most recent executed call
         self.fatal: ToolError | None = None
@@ -186,7 +200,11 @@ class ToolRunner:
         if not is_error(r):
             if name == "search_docs":
                 self.search_results.append(r)
-                self.search_cost += r["cost_usd"]
+                total = self.search_cost + r["cost_usd"]
+                if math.isfinite(total):
+                    self.search_cost = total
+                else:
+                    self.cost_overflow = True  # not added: a note must never carry an infinite cost
                 self.ledger.charge_usd(r["cost_usd"])  # search cost counts against the run and day totals
         elif r["error"] in FATAL_KINDS:
             self.fatal = r
@@ -205,7 +223,7 @@ class Asked(NamedTuple):
     called: bool                # a model turn came back (counts as a step)
 
 
-MAX_PLAUSIBLE_TOKENS = 10**9  # sanity bound; a larger count is treated as invalid, its known sibling is still charged
+MAX_PLAUSIBLE_TOKENS = 10**7  # sanity bound; a larger count is treated as invalid, its known sibling is still charged
 
 
 def _count_ok(x) -> bool:
@@ -270,7 +288,8 @@ def build_result(issue_url: str, outcome: Outcome, runner: ToolRunner, steps: in
     # Non-string citations are never str()'d (a nested object could blow the recursion limit).
     strs = list(dict.fromkeys(c for c in raw if isinstance(c, str)))
     valid = [c for c in strs if c in returned]
-    dropped = [c for c in strs if c not in returned] + ["<non-string citation>"] * (len(raw) - sum(isinstance(c, str) for c in raw))
+    dropped = [c for c in strs if c not in returned] + [
+        InvalidCitation(type(c).__name__) for c in raw if not isinstance(c, str)]
     category = final.get("category")
     note = TriageNote(
         issue_url=issue_url, outcome=outcome,
@@ -285,6 +304,9 @@ def build_result(issue_url: str, outcome: Outcome, runner: ToolRunner, steps: in
         # A "can't tell" that follows a broken tool is a failure, not evidence of unanswerability.
         note["outcome"] = "error"
         reason = "; ".join(f"tool {n} ended in error: {e['error']}" for n, e in failed)
+    if runner.cost_overflow:
+        note["outcome"] = "error"
+        reason = "search costs overflowed the float range; note cost_usd is understated"
     problems = contract_problems(note, runner.search_results)
     if problems and note["outcome"] != "error":
         # e.g. "answered" whose citations were all invented: a failure, not a quiet downgrade to cant_tell

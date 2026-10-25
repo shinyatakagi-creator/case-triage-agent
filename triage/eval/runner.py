@@ -1,6 +1,9 @@
 """Eval runner: cases in, EvalResults out. No network; the Runner does all the work.
 
 Reads case files from whatever path it is given. It never writes anywhere.
+
+Known limitation (accepted): a huge-int `steps` such as 10**400 passes the int check, so the case is
+failed by contract_problems (steps > MAX_STEPS) but keeps its original outcome label, not "error".
 """
 import json
 import math

@@ -1,11 +1,12 @@
 """Agent loop tests: fake LLM with scripted turns, fake tools returning synthetic fixtures. No live calls."""
 import json
+import math
 
 import pytest
 from agent_helpers import SRC, URL, FakeLLM, FakeTools, final, fx, turn, use
 
 from triage import agent
-from triage.agent import MAX_TOOL_CALLS, run_agent
+from triage.agent import MAX_PLAUSIBLE_TOKENS, MAX_TOOL_CALLS, InvalidCitation, run_agent
 from triage.contracts import MAX_STEPS, Comment, IssueThread, Passage, SearchResult, Signals, TriageNote, contract_problems
 from triage.llm import DEFAULT_MODEL, Ledger
 
@@ -314,7 +315,7 @@ def test_nested_or_non_string_citations_do_not_crash(ledger):
                                           likely_cause=deep(), category=deep()))])
     res = run_agent(URL, FakeTools(), llm, ledger, categories=["a"])
     assert [c["source"] for c in res["note"]["citations"]] == [SRC]
-    assert res["dropped_citations"] == ["<non-string citation>"] * 2 and res["note"]["category"] is None
+    assert all(isinstance(d, InvalidCitation) for d in res["dropped_citations"]) and len(res["dropped_citations"]) == 2 and res["note"]["category"] is None
 
 
 def test_search_cost_10_pow_400_is_malformed_not_crash(ledger):
@@ -358,3 +359,27 @@ def test_model_only_sees_what_the_thread_tool_returned(ledger):
     msgs = llm.seen[1]
     assert msgs[0]["content"] == f"Triage this issue: {URL}"
     assert msgs[2]["content"][0]["content"] == json.dumps(fx("thread.json"))
+
+
+def test_infinite_summed_search_cost_is_an_error_with_finite_note_cost(ledger):
+    big = 1.7e308  # each valid on its own; the sum overflows to inf
+    sr = _bad_search(cost_usd=big)
+    llm = FakeLLM([turn(use("search_docs", id="a", query="q"), use("search_docs", id="b", query="q")),
+                   final("cant_tell", citations=[])])
+    res = run_agent(URL, FakeTools(search_docs=[sr]), llm, ledger)
+    assert res["note"]["outcome"] == "error" and "overflow" in res["reason"]
+    assert math.isfinite(res["note"]["cost_usd"])
+
+
+def test_literal_marker_string_cannot_collide_with_invalid_citation(ledger):
+    llm = FakeLLM([search_turn(), turn(use("final_answer", outcome="answered",
+                                          citations=["<non-string citation>", 5, SRC]))])
+    res = run_agent(URL, FakeTools(), llm, ledger)
+    assert "<non-string citation>" in res["dropped_citations"]  # the real string, kept as a str
+    assert InvalidCitation("int") in res["dropped_citations"]
+    assert InvalidCitation("int") != "<non-string citation>"
+
+
+def test_token_plausibility_bound_is_ten_million():
+    assert MAX_PLAUSIBLE_TOKENS == 10**7
+    assert agent._count_ok(10**7) and not agent._count_ok(10**7 + 1)

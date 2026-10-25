@@ -43,7 +43,8 @@ class LLM(Protocol):
 
 
 class AnthropicLLM:
-    """UNRUN: never exercised against the real API (no `anthropic` package, no live calls yet).
+    """UNRUN: never exercised against the real API (the `anthropic` package is installed and pinned,
+    but no request has been made; complete() has only been read, not executed).
 
     Token usage: only input_tokens and output_tokens are read. Cache-token fields
     (cache_creation_input_tokens, cache_read_input_tokens) are ignored, so cost is misstated if
