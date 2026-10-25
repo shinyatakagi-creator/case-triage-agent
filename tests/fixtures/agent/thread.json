@@ -1,0 +1,4 @@
+{"number": 1, "title": "Synthetic: widget pods stuck pending", "author": "alice", "created_at": "2026-01-01T00:00:00Z",
+ "labels": ["kind/support"], "body": "SYNTHETIC-BODY-7f3a widget-controller reports FailedScheduling on version v0.0.1",
+ "comments": [{"author": "bob", "created_at": "2026-01-01T01:00:00Z", "body": "SYNTHETIC-COMMENT-9c1d same here"}],
+ "thread_truncated": true}
