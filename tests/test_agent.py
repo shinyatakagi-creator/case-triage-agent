@@ -175,6 +175,8 @@ def _bad_passage(**over):
     _bad_search(passages="abc"), _bad_search(passages=["abc"]),
     _bad_passage(source=["a"]), _bad_passage(text=None), _bad_passage(score="0.1"),
     _bad_passage(score=float("nan")),
+    _bad_search(cost_usd=10**400), _bad_search(latency_ms=10**400), _bad_passage(score=10**400),
+    _bad_search(cost_usd=-10**400),
 ])
 def test_malformed_search_output_is_error_result(ledger, bad):
     t = FakeTools(search_docs=[bad])
@@ -276,6 +278,59 @@ def test_failed_spend_write_keeps_cost_and_stops(tmp_path, monkeypatch):
     assert res["note"]["outcome"] == "error" and "spend ledger write failed" in res["reason"]
     assert res["note"]["cost_usd"] == pytest.approx(350 / 1e6)  # the paid call is still in the note
     assert len(llm.seen) == 1
+
+
+def deep(n=5000):
+    x = []
+    for _ in range(n):
+        x = [x]
+    return x
+
+
+def test_budget_refusal_is_not_a_tool_error_for_cant_tell_rule(ledger):
+    """MAX_TOOL_CALLS successes, then one refused call: a following cant_tell stays cant_tell."""
+    blocks = [use("search_docs", id=f"s{i}", query="q") for i in range(MAX_TOOL_CALLS + 1)]
+    llm = FakeLLM([turn(*blocks), final("cant_tell", citations=[])])
+    res = run_agent(URL, FakeTools(), llm, ledger)
+    assert llm.seen[1][-1]["content"][-1]["is_error"] and res["note"]["outcome"] == "cant_tell"
+
+
+def test_error_dict_with_nested_detail_does_not_crash(ledger):
+    t = FakeTools(search_docs=[{"error": "search_failed", "detail": deep(), "tool": 5}])
+    res = run_agent(URL, t, FakeLLM([search_turn(), final("cant_tell", citations=[])]), ledger)
+    assert res["note"]["outcome"] == "error"
+
+
+@pytest.mark.parametrize("inp", [{"query": deep()}, {"query": 5}, {}, {"query": "q", "k": float("inf")},
+                                 {"query": "q", "k": 10**400}, {"query": "q", "k": deep()}])
+def test_garbage_model_tool_input_does_not_crash(ledger, inp):
+    llm = FakeLLM([turn(use("search_docs", **inp)), final("cant_tell", citations=[])])
+    res = run_agent(URL, FakeTools(), llm, ledger)
+    assert res["note"]["outcome"] in ("cant_tell", "error")
+
+
+def test_nested_or_non_string_citations_do_not_crash(ledger):
+    llm = FakeLLM([search_turn(), turn(use("final_answer", outcome="answered", citations=[deep(), 5, SRC],
+                                          likely_cause=deep(), category=deep()))])
+    res = run_agent(URL, FakeTools(), llm, ledger, categories=["a"])
+    assert [c["source"] for c in res["note"]["citations"]] == [SRC]
+    assert res["dropped_citations"] == ["<non-string citation>"] * 2 and res["note"]["category"] is None
+
+
+def test_search_cost_10_pow_400_is_malformed_not_crash(ledger):
+    res = run_agent(URL, FakeTools(search_docs=[_bad_search(cost_usd=10**400)]),
+                    FakeLLM([search_turn(), final("cant_tell", citations=[])]), ledger)
+    assert res["search_results"] == [] and ledger.load_error is None
+
+
+@pytest.mark.parametrize("bad", [{"content": [], "input_tokens": 10**400, "output_tokens": 50},
+                                 {"content": [], "input_tokens": 100, "output_tokens": 10**400},
+                                 {"content": [], "input_tokens": 10**400, "output_tokens": 10**400},
+                                 {"content": [], "input_tokens": 10**12, "output_tokens": 50}])
+def test_huge_token_counts_error_keep_known_cost_no_crash(ledger, bad):
+    res = run_agent(URL, FakeTools(), FakeLLM([bad]), ledger)
+    assert res["note"]["outcome"] == "error" and "token counts" in res["reason"] and res["note"]["steps"] == 1
+    assert ledger.load_error is None and res["note"]["cost_usd"] == pytest.approx(ledger.run_usd)
 
 
 @pytest.mark.parametrize("bad", [{"content": [], "output_tokens": 50}, {"content": [], "input_tokens": 100},

@@ -34,6 +34,10 @@ def run_baseline(issue_url: str, tools: Tools, llm: LLM, ledger: Ledger,
     def done(outcome, final=None, reason=None, steps=0, usd=0.0):
         return build_result(issue_url, outcome, runner, steps, usd, final, categories, reason)
 
+    # Same order as the agent: the ledger is checked before anything is spent, tools included.
+    reason = ledger.check(llm.model)
+    if reason:
+        return done("error", reason=reason)
     thread = runner.call("get_issue_thread", {})
     if is_error(thread):
         return done("error", reason=f"get_issue_thread failed: {thread['error']}")

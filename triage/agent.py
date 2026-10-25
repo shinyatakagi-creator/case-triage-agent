@@ -5,6 +5,7 @@ inside that turn, and the single timeout retry, do not count. MAX_STEPS bounds m
 """
 import json
 import math
+import sys
 from typing import NamedTuple, Protocol, TypedDict
 
 from triage.contracts import (
@@ -91,7 +92,14 @@ def tool_specs(categories: list[str] | None) -> list[dict]:
 def _str(x): return isinstance(x, str)
 def _bool(x): return isinstance(x, bool)
 def _int(x): return isinstance(x, int) and not isinstance(x, bool)
-def _finite(x): return isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x)
+def _finite(x):
+    # Never raises: math.isfinite(10**400) raises OverflowError, so ints are compared to the
+    # largest float (exact comparison); a bigger int is simply invalid.
+    if isinstance(x, bool):
+        return False
+    if isinstance(x, float):
+        return math.isfinite(x)
+    return isinstance(x, int) and abs(x) <= sys.float_info.max
 def _nonneg(x): return _finite(x) and x >= 0
 def _strs(x): return isinstance(x, list) and all(isinstance(i, str) for i in x)
 
@@ -134,18 +142,24 @@ class ToolRunner:
     def _once(self, name: str, args: dict):
         try:
             if name == "search_docs":
-                r = self.tools.search_docs(str(args.get("query", "")), int(args.get("k", 5)))
+                k = args.get("k")
+                k = k if isinstance(k, int) and not isinstance(k, bool) and 1 <= k <= 20 else 5
+                r = self.tools.search_docs(args["query"], k)
             elif name == "get_issue_thread":
                 # Always the issue under triage, whatever the model asked for: the agent never
                 # fetches other threads or comments itself (leakage rule).
                 r = self.tools.get_issue_thread(self.issue_url)
             else:
-                r = self.tools.extract_error_signals(str(args.get("text", "")))
+                r = self.tools.extract_error_signals(args["text"])
         except Exception as e:  # tools should not raise; a raise is treated as a failed result
             r = {"error": FAIL_KIND[name], "detail": f"tool raised: {e!r}"[:200]}
         if is_error(r):
             if r["error"] not in ERROR_KINDS:
                 r = {"error": FAIL_KIND[name], "detail": "unknown error kind from tool"}
+            else:
+                # Keep only string fields: the error dict is json.dumps'd for the model and a
+                # tool-controlled nested detail could blow the recursion limit.
+                r = {k: r[k] for k in ("error", "detail", "tool", "reset") if isinstance(r.get(k), str)}
         elif not _fields_ok(r, OUTPUT_SPEC[name]):
             r = {"error": FAIL_KIND[name], "detail": "malformed tool output"}
         self.calls.append({"tool": name, "ok": not is_error(r)})
@@ -157,8 +171,14 @@ class ToolRunner:
             return self.fatal  # a fatal error ends the run; later blocks in the same turn are not executed
         if name in self.dead:
             return self.dead[name]
+        required = {"search_docs": "query", "extract_error_signals": "text"}.get(name)
+        if required and not isinstance(args.get(required), str):
+            # Model-supplied garbage input: not executed, not counted, tool not marked dead.
+            return {"error": FAIL_KIND[name], "detail": f"invalid input: {required} must be a string"}
         if len(self.calls) >= MAX_TOOL_CALLS:
             # Not executed. Reported with the tool's own failure kind (no budget kind in ErrorKind).
+            # Deliberately NOT recorded in last_error: a budget refusal is not a tool's own result,
+            # so it does not turn a later "cant_tell" into "error" (pinned by a test).
             return {"error": FAIL_KIND[name], "detail": f"tool call budget of {MAX_TOOL_CALLS} exhausted"}
         r = self._once(name, args)
         if self.retry_timeouts and is_error(r) and r["error"] == "timeout" and len(self.calls) < MAX_TOOL_CALLS:
@@ -185,8 +205,11 @@ class Asked(NamedTuple):
     called: bool                # a model turn came back (counts as a step)
 
 
+MAX_PLAUSIBLE_TOKENS = 10**9  # sanity bound; a larger count is treated as invalid, its known sibling is still charged
+
+
 def _count_ok(x) -> bool:
-    return isinstance(x, int) and not isinstance(x, bool) and x >= 0
+    return isinstance(x, int) and not isinstance(x, bool) and 0 <= x <= MAX_PLAUSIBLE_TOKENS
 
 
 def normalise_blocks(content: list) -> list[dict]:
@@ -244,9 +267,10 @@ def build_result(issue_url: str, outcome: Outcome, runner: ToolRunner, steps: in
     final = final if isinstance(final, dict) else {}
     returned = {p["source"] for r in runner.search_results for p in r["passages"]}
     raw = final.get("citations") if isinstance(final.get("citations"), list) else []
-    raw = list(dict.fromkeys(str(c) for c in raw))
-    valid = [c for c in raw if c in returned]
-    dropped = [c for c in raw if c not in returned]
+    # Non-string citations are never str()'d (a nested object could blow the recursion limit).
+    strs = list(dict.fromkeys(c for c in raw if isinstance(c, str)))
+    valid = [c for c in strs if c in returned]
+    dropped = [c for c in strs if c not in returned] + ["<non-string citation>"] * (len(raw) - sum(isinstance(c, str) for c in raw))
     category = final.get("category")
     note = TriageNote(
         issue_url=issue_url, outcome=outcome,

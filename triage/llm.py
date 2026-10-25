@@ -3,6 +3,7 @@ import fcntl
 import json
 import math
 import os
+import sys
 import tempfile
 from contextlib import contextmanager
 from datetime import date
@@ -44,6 +45,10 @@ class LLM(Protocol):
 class AnthropicLLM:
     """UNRUN: never exercised against the real API (no `anthropic` package, no live calls yet).
 
+    Token usage: only input_tokens and output_tokens are read. Cache-token fields
+    (cache_creation_input_tokens, cache_read_input_tokens) are ignored, so cost is misstated if
+    prompt caching is ever turned on.
+
     The SDK retries failed requests internally (max_retries, default 2), which would spend
     money outside the Ledger's view. max_retries is set to 0 here so every paid attempt goes
     through one complete() call and the agent's own retry rules stay the only ones.
@@ -78,7 +83,13 @@ def price(model: str) -> tuple[float, float]:
 
 
 def _finite_nonneg(x) -> bool:
-    return isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x) and x >= 0
+    """Never raises. math.isfinite(10**400) raises OverflowError, so ints are compared to the
+    largest float instead (exact int/float comparison); anything larger counts as invalid."""
+    if isinstance(x, bool):
+        return False
+    if isinstance(x, float):
+        return math.isfinite(x) and x >= 0
+    return isinstance(x, int) and 0 <= x <= sys.float_info.max
 
 
 def cost_usd(model: str, input_tokens: int, output_tokens: int) -> float:
@@ -125,7 +136,7 @@ class Ledger:
     def _refresh(self) -> None:
         try:
             self.day_usd = self._read_day()
-        except (ValueError, OSError) as e:
+        except Exception as e:  # incl. RecursionError from a deeply nested file; always fail closed
             self.load_error = f"spend file unreadable: {e!r}"[:200]  # fail closed, never reset to 0
 
     @contextmanager
@@ -158,6 +169,8 @@ class Ledger:
         try:
             with self._locked():
                 total = self._read_day() + usd
+                if not math.isfinite(total):
+                    raise ValueError("day total is not finite")  # never write Infinity to the file
                 fd, tmp = tempfile.mkstemp(dir=self.path.parent, prefix=".spend-")
                 try:
                     with os.fdopen(fd, "w") as f:
@@ -169,7 +182,7 @@ class Ledger:
                     Path(tmp).unlink(missing_ok=True)
                     raise
             self.day_usd = total
-        except (ValueError, OSError) as e:
+        except Exception as e:
             self.day_usd += usd
             self.load_error = f"spend ledger write failed: {e!r}"[:200]
         return usd

@@ -35,7 +35,10 @@ class FakeLLM:
         self.turns, self.seen = list(turns), []
 
     def complete(self, system, messages, tools):
-        self.seen.append(copy.deepcopy(messages))
+        try:
+            self.seen.append(copy.deepcopy(messages))
+        except RecursionError:  # tests that feed deeply nested model output
+            self.seen.append(None)
         return self.turns.pop(0)
 
 
@@ -53,7 +56,7 @@ class FakeTools:
         r = q.pop(0) if len(q) > 1 else q[0]
         if isinstance(r, Exception):
             raise r
-        return copy.deepcopy(r)
+        return r if isinstance(r, dict) and "error" in r else copy.deepcopy(r)
 
     def search_docs(self, query, k=5):
         return self._next("search_docs", query)

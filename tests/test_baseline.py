@@ -83,3 +83,12 @@ def test_baseline_cap_stops_before_call(tmp_path):
     llm = FakeLLM([final()])
     res = run_baseline(URL, FakeTools(), llm, led)
     assert res["note"]["outcome"] == "error" and llm.seen == []
+
+
+def test_baseline_failed_ledger_spends_nothing(tmp_path):
+    bad = tmp_path / "s.json"
+    bad.write_text("garbage")
+    t, llm = FakeTools(), FakeLLM([final()])
+    res = run_baseline(URL, t, llm, Ledger(path=bad))
+    assert res["note"]["outcome"] == "error" and t.calls == [] and llm.seen == []
+    assert res["note"]["tool_calls"] == [] and res["note"]["cost_usd"] == 0.0
