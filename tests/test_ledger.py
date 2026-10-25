@@ -114,7 +114,7 @@ def _fake_response(**usage):
 
 def _adapter(monkeypatch, response):
     from triage.llm import AnthropicLLM
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "dummy")  # constructing the client makes no request
+    monkeypatch.setenv("TRIAGE_ANTHROPIC_API_KEY", "dummy")  # constructing the client makes no request
     llm = AnthropicLLM()
     llm._client.messages.create = lambda **kw: response  # no network: the SDK call is replaced
     return llm.complete("s", [], [])
@@ -162,3 +162,41 @@ def test_haiku_4_5_input_output_are_flat():
 def test_defaults_are_owner_set():
     from triage.llm import DEFAULT_DAY_CAP_USD, DEFAULT_RUN_CAP_USD
     assert (DEFAULT_MODEL, DEFAULT_RUN_CAP_USD, DEFAULT_DAY_CAP_USD) == ("claude-haiku-5-5", 0.02, 1.00)
+
+
+def test_adapter_uses_only_the_triage_key_and_passes_it_explicitly(monkeypatch):
+    from triage.llm import AnthropicLLM
+    monkeypatch.setenv("TRIAGE_ANTHROPIC_API_KEY", "triage-key-value")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "other-key-value")
+    assert AnthropicLLM()._client.api_key == "triage-key-value"
+
+
+@pytest.mark.parametrize("value", [None, "", "   "])
+def test_adapter_missing_or_empty_key_raises_naming_the_variable_only(monkeypatch, value):
+    from triage.llm import AnthropicLLM
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "other-key-value")  # must NOT be used as a fallback
+    if value is None:
+        monkeypatch.delenv("TRIAGE_ANTHROPIC_API_KEY", raising=False)
+    else:
+        monkeypatch.setenv("TRIAGE_ANTHROPIC_API_KEY", value)
+    with pytest.raises(RuntimeError) as e:
+        AnthropicLLM()
+    msg = str(e.value)
+    assert "TRIAGE_ANTHROPIC_API_KEY" in msg and "other-key-value" not in msg
+
+
+def test_adapter_ignores_anthropic_base_url(monkeypatch):
+    from triage.llm import API_BASE_URL, AnthropicLLM
+    monkeypatch.setenv("TRIAGE_ANTHROPIC_API_KEY", "k")
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://evil.example")
+    assert str(AnthropicLLM()._client.base_url).rstrip("/") == API_BASE_URL == "https://api.anthropic.com"
+
+
+@pytest.mark.parametrize("value", ["secret-token-value", ""])
+def test_adapter_refuses_when_auth_token_is_set_without_printing_it(monkeypatch, value):
+    from triage.llm import AnthropicLLM
+    monkeypatch.setenv("TRIAGE_ANTHROPIC_API_KEY", "k")
+    monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", value)
+    with pytest.raises(RuntimeError) as e:
+        AnthropicLLM()
+    assert "ANTHROPIC_AUTH_TOKEN" in str(e.value) and "secret-token-value" not in str(e.value)

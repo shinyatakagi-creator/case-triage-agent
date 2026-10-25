@@ -14,6 +14,23 @@ from typing import NamedTuple, NotRequired, Protocol, TypedDict
 DEFAULT_MODEL = "claude-haiku-5-5"  # config value, override with env TRIAGE_MODEL
 
 
+API_KEY_ENV = "TRIAGE_ANTHROPIC_API_KEY"  # the only key variable read; ANTHROPIC_API_KEY is deliberately ignored
+
+
+API_BASE_URL = "https://api.anthropic.com"  # fixed, so ANTHROPIC_BASE_URL cannot redirect the key
+
+
+def api_key() -> str:
+    """The key from TRIAGE_ANTHROPIC_API_KEY. Raises without echoing any part of a value."""
+    if "ANTHROPIC_AUTH_TOKEN" in os.environ:
+        # The SDK would send this as a second credential; refuse rather than guess which one wins.
+        raise RuntimeError("ANTHROPIC_AUTH_TOKEN is set in the environment; unset it before using this adapter")
+    key = os.environ.get(API_KEY_ENV, "").strip()
+    if not key:
+        raise RuntimeError(f"{API_KEY_ENV} is not set or is empty; set it in the environment (not in a committed file)")
+    return key
+
+
 def model_name() -> str:
     return os.environ.get("TRIAGE_MODEL", DEFAULT_MODEL)
 
@@ -80,11 +97,14 @@ class AnthropicLLM:
     """
 
     def __init__(self, model: str | None = None, max_tokens: int = 1500):
+        key = api_key()  # checked first so a missing key fails before anything else happens
         import anthropic  # lazy, so tests and CI do not need the package
 
         self.model = model or model_name()
         self.max_tokens = max_tokens
-        self._client = anthropic.Anthropic(max_retries=0)  # reads ANTHROPIC_API_KEY from the environment
+        # api_key is passed explicitly so the SDK never falls back to ANTHROPIC_API_KEY;
+        # base_url is fixed for the same reason (ANTHROPIC_BASE_URL could send the key elsewhere).
+        self._client = anthropic.Anthropic(api_key=key, base_url=API_BASE_URL, max_retries=0)
 
     def complete(self, system: str, messages: list[dict], tools: list[dict]) -> Turn:
         r = self._client.messages.create(
