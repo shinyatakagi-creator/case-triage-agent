@@ -1,6 +1,6 @@
 from triage.contracts import MAX_STEPS, contract_problems
 
-RESULT = {"passages": [{"source": "tasks/a"}, {"source": "tasks/b"}], "cost_usd": 0, "latency_ms": 0}
+RESULT = {"passages": [{"source": "tasks/a"}, {"source": "tasks/b"}], "cost_usd": 0, "latency_ms": 0, "cache_hit": False}
 
 
 def note(**kw):
@@ -40,8 +40,9 @@ def test_normalise_search_maps_rag_hybrid_fields():
 
     raw = {"results": [{"rank": 1, "score": 1.5, "chunk_id": "c1", "doc_id": "tasks/x", "url": "u",
                         "title": "T", "heading_path": "T > H", "token_count": 3, "content": "body"}],
-           "cost_usd": 0.0, "latency_ms": 12.5}
+           "cost_usd": 0.0, "latency_ms": 12.5, "query_embedding": {"cache_hit": True}}
     out = normalise_search(raw)
     assert out["passages"][0] == {"text": "body", "source": "tasks/x", "url": "u", "title": "T",
                                   "heading": "T > H", "chunk_id": "c1", "score": 1.5}
-    assert (out["cost_usd"], out["latency_ms"]) == (0.0, 12.5)
+    assert (out["cost_usd"], out["latency_ms"], out["cache_hit"]) == (0.0, 12.5, True)
+    assert normalise_search({**raw, "query_embedding": None})["cache_hit"] is False

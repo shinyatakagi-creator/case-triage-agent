@@ -48,6 +48,8 @@ class SearchResult(TypedDict):
     passages: list[Passage]
     cost_usd: float  # added into the run's cost
     latency_ms: float
+    # Query-embedding cache hit; cost/latency are reported from uncached calls only.
+    cache_hit: bool
 
 
 # --- get_issue_thread ------------------------------------------------------

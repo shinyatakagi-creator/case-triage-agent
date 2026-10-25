@@ -35,7 +35,11 @@ def normalise_search(raw: dict) -> SearchResult:
         )
         for r in raw["results"]
     ]
-    return SearchResult(passages=passages, cost_usd=raw["cost_usd"], latency_ms=raw["latency_ms"])
+    # bm25 responses carry no query_embedding at all, so absent means not a cache hit.
+    cache_hit = bool((raw.get("query_embedding") or {}).get("cache_hit", False))
+    return SearchResult(
+        passages=passages, cost_usd=raw["cost_usd"], latency_ms=raw["latency_ms"], cache_hit=cache_hit
+    )
 
 
 @mcp.tool()
