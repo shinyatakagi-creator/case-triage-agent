@@ -4,7 +4,7 @@ Usage (env loaded, rag-hybrid up):
     python -m scripts.draft_labels 141240 135321 ...
     python -m scripts.draft_labels --from data/candidates_support_250.jsonl --limit 20 [--max-usd 3.00]
 
-Per issue: the thread exactly as get_issue_thread returns it (cut at the first maintainer reply),
+Per issue: the thread exactly as get_issue_thread returns it (cut at the first reply by anyone but the issue author),
 three searches (title k=5, key terms from the body k=8, the opening of the body k=8) merged and
 de-duplicated by chunk_id, then ONE model call. The model's quotes are checked mechanically; any
 failed check turns the label into "unsure". A draft is a draft: nothing here writes data/eval/.
@@ -32,7 +32,7 @@ MAX_QUOTED_DOCS = 3
 BODY_HEAD_LINES = 15      # kept in the draft so the review step needs no network
 
 SYSTEM = """You help label Kubernetes GitHub issues for an evaluation set.
-You get one issue (its body and the human comments before any maintainer reply) and a numbered list of
+You get one issue (its body and the issue author's own comments before anyone else replied) and a numbered list of
 documentation chunks returned by a search. Decide: does a page in these results show or state the answer, so
 a reader could solve the issue from it without the maintainer's reply?
 - "yes": give one to three doc_ids, taken only from the provided results, and for each an exact quote
@@ -97,7 +97,7 @@ def gather(thread: dict, search_tool) -> tuple[list[dict], float, list[str]]:
 
 def render_prompt(thread: dict, chunks: list[dict]) -> str:
     lines = [f"Issue title: {thread['title']}", "", "Issue body:", thread["body"], "",
-             f"Comments before the first maintainer reply ({len(thread['comments'])}):"]
+             f"Author's own comments before anyone else replied ({len(thread['comments'])}):"]
     for c in thread["comments"]:
         lines += [f"--- {c['author']}", c["body"]]
     lines += ["", "Documentation chunks:"]

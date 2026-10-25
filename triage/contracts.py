@@ -68,7 +68,7 @@ class IssueThread(TypedDict):
     created_at: str
     labels: list[str]
     body: str
-    comments: list[Comment]  # human comments before the first maintainer reply only
+    comments: list[Comment]  # the issue author's own comments before anyone else's reply only
     thread_truncated: bool
 
 

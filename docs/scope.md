@@ -21,7 +21,8 @@ An agent that takes a public GitHub issue URL and investigates it across several
 
 ## Tools (MCP server, 3 tools)
 1. search_docs: calls rag-hybrid /search (BM25 + kNN with RRF), returns passages with citations.
-2. get_issue_thread: pulls the issue and comments through the GitHub API. Answer leakage rule: return only the issue body and comments up to the first maintainer reply. Maintainer comments often contain the answer or a doc link, which would inflate "correct doc cited".
+2. get_issue_thread: pulls the issue and comments through the GitHub API. Answer leakage rule (changed 25 Oct 2026): return the issue body plus only the issue author's own comments that come before the first comment by anyone else. Bot comments (the BOT_LOGINS list) are ignored and do not end the thread. thread_truncated is true when anything was cut. Replies often contain the answer or a doc link, which would inflate "correct doc cited".
+   - Why it changed: the first rule cut at the first reply by an OWNER/MEMBER/COLLABORATOR and under-detected maintainers. Example: on kubernetes/kubernetes #131977, ffromani (a SIG Node maintainer) has author_association CONTRIBUTOR and replied first, so his answer was visible to the agent. author_association is no longer used.
 3. extract_error_signals: parses stack traces, error strings and versions out of the returned text.
 
 Implementation notes: Python MCP SDK 2.x (class `MCPServer` in `mcp.server.mcpserver`; it was `FastMCP` in 1.x), version pinned in requirements.txt. Tools return errors as small dicts (`{"error": "timeout" | "rate_limited" | "not_found" | "bad_url" | ...}`) rather than raising, so the agent sees them and the failure tests can assert on them.
@@ -94,7 +95,7 @@ Verified (RAN):
 - Agent loop, baseline, ledger and eval harness: 215 unit tests pass, all on fakes and synthetic fixtures.
 - The `anthropic` package is installed and pinned (2.3.0); the adapter constructs a client offline.
 
-Candidate pulls (25 Oct, script counts from `scripts.pull_candidates`, real GitHub API, read-only token). "Substantive" means body >= 200 chars and at least one human comment by someone else. It does NOT mean the docs answer the issue; that is only known after labelling.
+Candidate pulls (25 Oct, script counts from `scripts.pull_candidates`, real GitHub API, read-only token). The "Maintainer reply" column and the maintainer-reply counts below were computed under the OLD leakage rule (OWNER/MEMBER/COLLABORATOR only) and are superseded; the script now reports "has reply by someone else", and the pulls need re-running to get that stat. "Substantive" means body >= 200 chars and at least one human comment by someone else. It does NOT mean the docs answer the issue; that is only known after labelling.
 
 | Pull | Pulled | Body >= 200 | Human comment by someone else | Maintainer reply | Substantive | Median body chars |
 |---|---|---|---|---|---|---|

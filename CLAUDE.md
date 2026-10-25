@@ -7,7 +7,7 @@ Read first: docs/scope.md (v3) and docs/evening-1-guide.md. The scope is the sou
 ## Hard rules
 
 1. **Secrets and data.** Never commit .env, tokens, or data/. Run `git status` before every commit. GITHUB_TOKEN is read-only, public repos, environment variable only.
-2. **Leakage rule.** get_issue_thread returns the issue body and human comments only up to the first maintainer reply (maintainer = OWNER/MEMBER/COLLABORATOR, not the issue author, not a bot). The tests for this must keep passing. Never loosen the rule to make a result look better.
+2. **Leakage rule.** get_issue_thread returns the issue body plus only the issue author's own comments that come before the first comment by anyone else. Bot comments (the BOT_LOGINS list in triage/thread.py) are ignored and do not end the thread. thread_truncated is true when anything was cut. author_association is not used. The tests for this must keep passing. Never loosen the rule to make a result look better.
 3. **Frozen contracts.** triage/contracts.py defines tool output shapes, including the error dict keys (`timeout`, `rate_limited`, `not_found`, `bad_url`, ...). Failure tests assert on these. Changing a key or shape needs my approval.
 4. **The labelled eval set is mine.** Labels may be drafted by a model into data/drafts/. Only I promote reviewed labels into data/eval/. Never write data/eval/ yourself. Never use the 40 eval issues to tune the agent's prompts.
 5. **No live paid calls in loops.** Live model calls (any model) only when I ask for a live run, and always under a per-run and a per-day cost cap. CI uses recorded fixtures, never live calls.

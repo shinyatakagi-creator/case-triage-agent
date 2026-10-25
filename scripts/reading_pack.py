@@ -3,7 +3,7 @@
 Usage (from repo root, env loaded): python -m scripts.reading_pack 141240 135321 ...
 
 Read-only: no model calls, no verdicts, no ranking, no hints. The thread is exactly what
-get_issue_thread returns (cut at the first maintainer reply, bots dropped), so the pack never
+get_issue_thread returns (cut at the first reply by anyone but the issue author, bots dropped), so the pack never
 shows more than the agent would see. The docs hits are search_docs(title, hybrid, k=5); the first 3 also get their full chunk text, then
 lines of the top 5 chunks that share words with the title and the head of the body (plain word overlap, no judgement).
 """
@@ -142,7 +142,7 @@ def render(number: int, state: str, thread: dict, hits: dict) -> str:
              f"Labels: {', '.join(thread['labels']) or '(none)'}  ",
              f"thread_truncated: {thread['thread_truncated']}", "",
              "## Issue body", "", fence(thread["body"]), "",
-             f"## Comments before the first maintainer reply ({len(thread['comments'])})", ""]
+             f"## Author's own comments before anyone else replied ({len(thread['comments'])})", ""]
     for c in thread["comments"]:
         lines += [f"### {c['author']} at {c['created_at']}", "", fence(c["body"]), ""]
     if not thread["comments"]:

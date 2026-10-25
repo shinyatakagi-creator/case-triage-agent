@@ -1,4 +1,4 @@
-"""GitHub issue fetching plus the answer-leakage rule (cut at first maintainer reply)."""
+"""GitHub issue fetching plus the answer-leakage rule (cut at the first reply by anyone but the issue author)."""
 import os
 import re
 
@@ -12,7 +12,6 @@ ISSUE_URL_RE = re.compile(r"^https://github\.com/kubernetes/kubernetes/issues/(\
 
 # k8s-ci-robot and friends are normal user accounts, so match on login, not account type.
 BOT_LOGINS = {"k8s-ci-robot", "k8s-triage-robot", "fejta-bot", "k8s-github-robot"}
-MAINTAINER_ASSOCIATIONS = {"OWNER", "MEMBER", "COLLABORATOR"}
 
 MAX_BODY_CHARS = 6000
 MAX_COMMENT_PAGES = 3
@@ -46,26 +45,27 @@ def is_bot(item: dict) -> bool:
     )
 
 
-def is_maintainer_reply(comment: dict, issue_author: str) -> bool:
-    return (
-        not is_bot(comment)
-        and _login(comment) != issue_author
-        and comment.get("author_association") in MAINTAINER_ASSOCIATIONS
-    )
+def is_reply_by_other(comment: dict, issue_author: str) -> bool:
+    """A non-bot comment by someone other than the issue author.
+
+    author_association is deliberately NOT used: it under-detects maintainers (a SIG Node maintainer
+    shows as CONTRIBUTOR, see #131977), so any other human counts."""
+    return not is_bot(comment) and _login(comment) != issue_author
 
 
-def cut_at_first_maintainer(issue: dict, comments: list[dict]) -> IssueThread:
-    """Keep the issue body and human comments before the first maintainer reply.
+def cut_at_first_reply(issue: dict, comments: list[dict]) -> IssueThread:
+    """Keep the issue body and the issue author's own comments that come before anyone else's.
 
-    Maintainer replies often contain the answer or a doc link, so everything from
-    the first one onward is withheld. Bot comments are dropped.
+    The first reply by anyone else (maintainer or not) often contains the answer or a doc link, so it and
+    everything after it is withheld and thread_truncated is True. Bot comments are ignored: they are
+    dropped and do not end the thread.
     """
     author = _login(issue)
     kept, truncated = [], False
     for c in comments:
         if is_bot(c):
             continue
-        if is_maintainer_reply(c, author):
+        if is_reply_by_other(c, author):
             truncated = True
             break
         kept.append(

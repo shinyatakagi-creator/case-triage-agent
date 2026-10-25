@@ -9,7 +9,7 @@ from triage.signals import extract_error_signals as _extract
 from triage.thread import (
     NotFound,
     RateLimited,
-    cut_at_first_maintainer,
+    cut_at_first_reply,
     fetch_comments,
     fetch_issue,
     parse_issue_url,
@@ -63,7 +63,7 @@ def search_docs(query: str, k: int = 5) -> dict:
 
 @mcp.tool()
 def get_issue_thread(issue_url: str) -> dict:
-    """Fetch a kubernetes/kubernetes issue: body and human comments up to the first maintainer reply."""
+    """Fetch a kubernetes/kubernetes issue: body and the author's own comments before anyone else replies."""
     try:
         number = parse_issue_url(issue_url)
     except ValueError as e:
@@ -74,7 +74,7 @@ def get_issue_thread(issue_url: str) -> dict:
             if "pull_request" in issue:
                 return {"error": "not_an_issue", "detail": "this URL is a pull request"}
             comments = fetch_comments(number, client)
-        return cut_at_first_maintainer(issue, comments)
+        return cut_at_first_reply(issue, comments)
     except NotFound:
         return {"error": "not_found"}
     except RateLimited as e:

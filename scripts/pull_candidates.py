@@ -17,7 +17,7 @@ from triage.thread import (
     _login,
     fetch_comments,
     is_bot,
-    is_maintainer_reply,
+    is_reply_by_other,
     RateLimited,
 )
 
@@ -58,7 +58,7 @@ def summarise(issue: dict, comments: list[dict]) -> dict:
         "comments_total": len(comments),
         "human_comments": len(human),
         "human_comments_by_others": len(others),
-        "has_maintainer_reply": any(is_maintainer_reply(c, author) for c in comments),
+        "has_reply_by_other": any(is_reply_by_other(c, author) for c in comments),
         "url": issue["html_url"],
     }
 
@@ -93,7 +93,7 @@ def main():
     print(f"candidates pulled:                    {n}")
     print(f"body >= 200 chars:                    {sum(r['body_chars'] >= 200 for r in rows)}")
     print(f">=1 human comment by someone else:    {sum(r['human_comments_by_others'] >= 1 for r in rows)}")
-    print(f"has maintainer reply:                 {sum(r['has_maintainer_reply'] for r in rows)}")
+    print(f"has reply by someone else:            {sum(r['has_reply_by_other'] for r in rows)}")
     print(f"substantive (both of the above):      {len(substantive)}")
     print(f"median body chars:                    {statistics.median(r['body_chars'] for r in rows):.0f}")
 
