@@ -10,7 +10,7 @@ from datetime import date
 from pathlib import Path
 from typing import NamedTuple, NotRequired, Protocol, TypedDict
 
-# UNVERIFIED PLACEHOLDER: this model id was not checked against Anthropic's model list.
+# Owner-set default (25 Oct 2026).
 DEFAULT_MODEL = "claude-haiku-5-5"  # config value, override with env TRIAGE_MODEL
 
 
@@ -19,13 +19,15 @@ def model_name() -> str:
 
 
 class ModelPrice(NamedTuple):
-    """USD per million tokens. The long_* rates apply when the prompt (input + cache read + cache
-    write tokens) exceeds LONG_PROMPT_TOKENS; for models without tiers they equal the short rates."""
+    """USD per million tokens. All five long_* rates apply when the prompt (input + cache read +
+    cache write tokens) exceeds LONG_PROMPT_TOKENS; for models without tiers they equal the short rates."""
     input: float
     output: float
     write_5m: float
     write_1h: float
     read: float
+    long_input: float
+    long_output: float
     long_write_5m: float
     long_write_1h: float
     long_read: float
@@ -33,18 +35,15 @@ class ModelPrice(NamedTuple):
 
 LONG_PROMPT_TOKENS = 100_000
 
-# input/output rates are UNVERIFIED PLACEHOLDERS: the owner has not given them. The cache rates are
-# the owner's figures (25 Oct); the owner gave only cache rates, and the tier rule below
-# (prompt size > 100k) is my reading of "<=100k / >100k". Input/output are NOT tiered here.
-# Note: the haiku-5-5 cache rates imply a base input price of about 0.10 (0.50 above 100k) by the
-# usual 1.25x / 2x / 0.1x multipliers, which does not match the 1.0 placeholder; fix before trusting costs.
-# haiku-4-5-20251001 input 1.0 / output 5.0 were not given either (from memory, UNVERIFIED).
+# Owner-confirmed 25 Oct 2026, source: platform.claude.com/docs/en/about-claude/pricing
+# Tier rule (owner-confirmed): prompt size = input + cache read + cache write tokens; above 100,000
+# all five rates switch to the long_* values, output included.
 PRICES_USD_PER_MTOK: dict[str, ModelPrice] = {
-    "claude-haiku-5-5": ModelPrice(1.0, 5.0, 0.125, 0.20, 0.01, 0.625, 1.00, 0.05),
-    "claude-haiku-4-5-20251001": ModelPrice(1.0, 5.0, 1.25, 2.00, 0.10, 1.25, 2.00, 0.10),
+    "claude-haiku-5-5": ModelPrice(0.10, 0.50, 0.125, 0.20, 0.01, 0.50, 2.50, 0.625, 1.00, 0.05),
+    "claude-haiku-4-5-20251001": ModelPrice(1.0, 5.0, 1.25, 2.00, 0.10, 1.0, 5.0, 1.25, 2.00, 0.10),
 }
 
-DEFAULT_RUN_CAP_USD = 0.05  # placeholder; the owner sets real caps
+DEFAULT_RUN_CAP_USD = 0.02  # owner-set 25 Oct 2026
 DEFAULT_DAY_CAP_USD = 1.00
 SPEND_PATH = Path("data/spend.json")  # data/ is gitignored
 
@@ -134,8 +133,9 @@ def cost_usd(model: str, input_tokens: int, output_tokens: int, cache_write_5m: 
     if not all(_finite_nonneg(c) for c in counts):
         raise ValueError(f"invalid token counts: {counts!r}")
     long = input_tokens + cache_write_5m + cache_write_1h + cache_read > LONG_PROMPT_TOKENS
-    w5, w1, rd = (p.long_write_5m, p.long_write_1h, p.long_read) if long else (p.write_5m, p.write_1h, p.read)
-    total = input_tokens * p.input + output_tokens * p.output + cache_write_5m * w5 + cache_write_1h * w1 + cache_read * rd
+    r_in, r_out, w5, w1, rd = ((p.long_input, p.long_output, p.long_write_5m, p.long_write_1h, p.long_read)
+                               if long else (p.input, p.output, p.write_5m, p.write_1h, p.read))
+    total = input_tokens * r_in + output_tokens * r_out + cache_write_5m * w5 + cache_write_1h * w1 + cache_read * rd
     return total / 1_000_000
 
 

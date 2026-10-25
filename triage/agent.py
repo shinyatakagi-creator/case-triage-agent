@@ -8,8 +8,7 @@ Known limitations (accepted):
   note.tool_calls; the only bound on how many a model can emit is MAX_STEPS turns.
 - A model turn whose token counts are missing or invalid is charged for the known fields only, so
   its real cost may be under-counted.
-- Cache tiers are keyed on prompt size (input + cache tokens > 100k); that is a reading of the
-  owner's price list, and input/output rates are not tiered (see llm.py).
+- Price tiers are keyed on prompt size (input + cache tokens > 100k) and cover all five rates (see llm.py).
 """
 import json
 import math

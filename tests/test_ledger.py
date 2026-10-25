@@ -64,7 +64,7 @@ def test_new_day_resets_total(tmp_path):
 
 
 def test_cost_arithmetic():
-    assert math.isclose(cost_usd(DEFAULT_MODEL, 1_000_000, 1_000_000), 6.0)  # placeholder prices
+    assert math.isclose(cost_usd(DEFAULT_MODEL, 1_000_000, 1_000_000), 0.50 + 2.50)  # prompt > 100k: long tier
 
 
 def test_non_finite_day_total_is_never_written(tmp_path):
@@ -82,9 +82,9 @@ H5, H45 = "claude-haiku-5-5", "claude-haiku-4-5-20251001"
 
 
 def test_cache_cost_short_tier_haiku_5_5():
-    # prompt 90k <= 100k: write 5m 0.125, write 1h 0.20, read 0.01 (placeholder input 1.0)
+    # prompt 90k <= 100k: input 0.10, write 5m 0.125, write 1h 0.20, read 0.01
     got = cost_usd(H5, 10_000, 0, cache_write_5m=50_000, cache_write_1h=20_000, cache_read=10_000)
-    assert math.isclose(got, (10_000 * 1.0 + 50_000 * 0.125 + 20_000 * 0.20 + 10_000 * 0.01) / 1e6)
+    assert math.isclose(got, (10_000 * 0.10 + 50_000 * 0.125 + 20_000 * 0.20 + 10_000 * 0.01) / 1e6)
 
 
 def test_cache_cost_long_tier_boundary_haiku_5_5():
@@ -132,3 +132,33 @@ def test_adapter_unsplit_cache_write_priced_at_1h_and_none_is_zero(monkeypatch):
     t = _adapter(monkeypatch, _fake_response(cache_creation=None, cache_creation_input_tokens=9,
                                             cache_read_input_tokens=None))
     assert (t["cache_write_5m_tokens"], t["cache_write_1h_tokens"], t["cache_read_tokens"]) == (0, 9, 0)
+
+
+def test_input_and_output_are_tiered_at_100k_prompt():
+    # exactly 100,000 prompt tokens: short tier (input 0.10, output 0.50)
+    assert math.isclose(cost_usd(H5, 100_000, 1_000_000), (100_000 * 0.10 + 1_000_000 * 0.50) / 1e6)
+    # 100,001: long tier for BOTH input and output (0.50 / 2.50)
+    assert math.isclose(cost_usd(H5, 100_001, 1_000_000), (100_001 * 0.50 + 1_000_000 * 2.50) / 1e6)
+
+
+def test_cache_tokens_alone_can_push_the_prompt_over_the_line():
+    # input 40k + cache read 60k = 100,000: still short; one more cache token flips everything
+    assert math.isclose(cost_usd(H5, 40_000, 1000, cache_read=60_000),
+                        (40_000 * 0.10 + 1000 * 0.50 + 60_000 * 0.01) / 1e6)
+    assert math.isclose(cost_usd(H5, 40_000, 1000, cache_read=60_001),
+                        (40_000 * 0.50 + 1000 * 2.50 + 60_001 * 0.05) / 1e6)
+    # cache writes count toward the prompt too
+    assert math.isclose(cost_usd(H5, 1, 1, cache_write_5m=50_000, cache_write_1h=50_000),
+                        (1 * 0.50 + 1 * 2.50 + 50_000 * 0.625 + 50_000 * 1.00) / 1e6)
+    assert math.isclose(cost_usd(H5, 1, 1, cache_write_5m=50_000, cache_write_1h=49_999),  # 1 + 99,999 = 100,000
+                        (1 * 0.10 + 1 * 0.50 + 50_000 * 0.125 + 49_999 * 0.20) / 1e6)
+
+
+def test_haiku_4_5_input_output_are_flat():
+    assert math.isclose(cost_usd(H45, 100_001, 1000), (100_001 * 1.0 + 1000 * 5.0) / 1e6)
+    assert math.isclose(cost_usd(H45, 10, 1000), (10 * 1.0 + 1000 * 5.0) / 1e6)
+
+
+def test_defaults_are_owner_set():
+    from triage.llm import DEFAULT_DAY_CAP_USD, DEFAULT_RUN_CAP_USD
+    assert (DEFAULT_MODEL, DEFAULT_RUN_CAP_USD, DEFAULT_DAY_CAP_USD) == ("claude-haiku-5-5", 0.02, 1.00)

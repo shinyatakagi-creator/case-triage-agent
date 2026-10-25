@@ -16,6 +16,10 @@ def ledger(tmp_path):
     return Ledger(per_run_cap=1.0, per_day_cap=10.0, path=tmp_path / "spend.json")
 
 
+# One scripted turn is 100 input + 50 output tokens at claude-haiku-5-5 short-tier rates (0.10 / 0.50).
+TURN_USD = (100 * 0.10 + 50 * 0.50) / 1e6
+
+
 def search_turn(q="q", id="s"):
     return turn(use("search_docs", id=id, query=q))
 
@@ -28,7 +32,7 @@ def test_happy_path_valid_citation(ledger):
     assert [c["source"] for c in n["citations"]] == [SRC]
     assert n["category"] is None  # model gave none
     assert contract_problems(n, res["search_results"]) == []
-    assert n["cost_usd"] == pytest.approx(0.0001 + 3 * (100 * 1.0 + 50 * 5.0) / 1e6)
+    assert n["cost_usd"] == pytest.approx(0.0001 + 3 * TURN_USD)
     assert ledger.run_usd == pytest.approx(n["cost_usd"])  # model + search both counted
     assert [c["tool"] for c in n["tool_calls"]] == ["get_issue_thread", "search_docs"]
 
@@ -184,7 +188,7 @@ def test_malformed_search_output_is_error_result(ledger, bad):
     llm = FakeLLM([search_turn(), final("cant_tell", citations=[])])
     res = run_agent(URL, t, llm, ledger)
     assert res["note"]["tool_calls"] == [{"tool": "search_docs", "ok": False}]
-    assert res["search_results"] == [] and res["note"]["cost_usd"] == pytest.approx(2 * 350 / 1e6)
+    assert res["search_results"] == [] and res["note"]["cost_usd"] == pytest.approx(2 * TURN_USD)
     sent = llm.seen[1][-1]["content"][0]
     assert sent["is_error"] and "malformed" in sent["content"]
 
@@ -257,9 +261,9 @@ def test_search_cost_counts_toward_run_cap(tmp_path):
 
 def test_per_day_cap_persisted_stops_before_first_call(tmp_path):
     p = tmp_path / "s.json"
-    Ledger(per_run_cap=1, per_day_cap=0.001, path=p).charge(DEFAULT_MODEL, 1000, 1000)  # 0.006 USD
+    Ledger(per_run_cap=1, per_day_cap=0.0001, path=p).charge(DEFAULT_MODEL, 1000, 1000)  # 0.0006 USD
     llm = FakeLLM([final()])
-    res = run_agent(URL, FakeTools(), llm, Ledger(per_run_cap=1, per_day_cap=0.001, path=p))
+    res = run_agent(URL, FakeTools(), llm, Ledger(per_run_cap=1, per_day_cap=0.0001, path=p))
     assert res["note"]["outcome"] == "error" and "per-day cap" in res["reason"] and llm.seen == []
 
 
@@ -277,7 +281,7 @@ def test_failed_spend_write_keeps_cost_and_stops(tmp_path, monkeypatch):
     llm = FakeLLM([search_turn(), final()])
     res = run_agent(URL, FakeTools(), llm, led)
     assert res["note"]["outcome"] == "error" and "spend ledger write failed" in res["reason"]
-    assert res["note"]["cost_usd"] == pytest.approx(350 / 1e6)  # the paid call is still in the note
+    assert res["note"]["cost_usd"] == pytest.approx(TURN_USD)  # the paid call is still in the note
     assert len(llm.seen) == 1
 
 
