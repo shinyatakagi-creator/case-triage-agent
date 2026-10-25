@@ -131,3 +131,85 @@ def test_show_prints_the_fields_the_owner_needs(capsys):
     out = capsys.readouterr().out
     for want in ("#1  t1", "issues/1", "l1", "DRAFT: YES", "doc: docs/a", "quote: q", "reason: r", "x failed"):
         assert want in out
+
+
+# --- --redo ------------------------------------------------------------------
+
+
+def redo(tmp_path, ks, numbers, typed_lines=(), drafts=DRAFTS):
+    return rl.review(drafts, tmp_path / "reviewed.jsonl", getkey=keys(*ks), show=lambda d, p: None,
+                     readline=typed(*typed_lines), redo=numbers)
+
+
+def test_redo_replaces_in_place_and_keeps_the_previous_decision(tmp_path):
+    run(tmp_path, "yu", typed_lines=[], drafts=[draft(1, "yes"), draft(3, "unsure")])  # 1 accepted, 3 kept unsure
+    run(tmp_path, "y", drafts=[draft(5, "yes")])
+    before = lines(tmp_path / "reviewed.jsonl")
+    s = redo(tmp_path, "n", [3], drafts=[draft(1, "yes"), draft(3, "unsure"), draft(5, "yes")])  # 3: unsure -> no
+    after = lines(tmp_path / "reviewed.jsonl")
+    assert [r["draft"]["number"] for r in after] == [1, 3, 5]  # same order, nothing added or lost
+    assert after[0] == before[0] and after[2] == before[2]  # other decisions untouched
+    new = after[1]
+    assert (new["decision"], new["redone"], new["decided_from_unsure"]) == ("no", True, True)
+    assert new["previous_decision"] == before[1] and new["previous_decision"]["decision"] == "unsure"
+    assert before[1]["redone"] is False and "previous_decision" not in before[1]
+    assert s["resolved"] == 1 and s["reviewed_total"] == 3
+
+
+def test_redo_twice_nests_the_history(tmp_path):
+    drafts = [draft(1, "yes")]
+    run(tmp_path, "y", drafts=drafts)
+    redo(tmp_path, "n", [1], drafts=drafts)   # yes -> no
+    redo(tmp_path, "y", [1], drafts=drafts)   # accept the draft (yes) again
+    r = lines(tmp_path / "reviewed.jsonl")
+    assert len(r) == 1 and r[0]["decision"] == "yes" and r[0]["redone"] is True
+    assert r[0]["previous_decision"]["decision"] == "no"
+    assert r[0]["previous_decision"]["previous_decision"]["decision"] == "yes"
+
+
+def test_redo_shows_the_issue_even_though_it_was_reviewed_and_a_normal_run_does_not(tmp_path):
+    drafts = [draft(1, "yes")]
+    run(tmp_path, "y", drafts=drafts)
+    shown = []
+    rl.review(drafts, tmp_path / "reviewed.jsonl", getkey=keys("q"), show=lambda d, p: shown.append(p))
+    assert shown == []  # normal run: nothing left
+    rl.review(drafts, tmp_path / "reviewed.jsonl", getkey=keys("q"), show=lambda d, p: shown.append(p), redo=[1])
+    assert shown == ["1/1 REDO"]
+
+
+def test_quit_during_redo_leaves_the_file_exactly_as_it_was(tmp_path):
+    drafts = [draft(1, "yes")]
+    run(tmp_path, "y", drafts=drafts)
+    raw = (tmp_path / "reviewed.jsonl").read_text()
+    s = redo(tmp_path, "q", [1], drafts=drafts)
+    assert s["quit_early"] and (tmp_path / "reviewed.jsonl").read_text() == raw
+
+
+def test_redo_of_an_issue_never_reviewed_is_a_normal_new_record(tmp_path):
+    redo(tmp_path, "y", [1], drafts=[draft(1, "yes")])
+    r = lines(tmp_path / "reviewed.jsonl")
+    assert len(r) == 1 and r[0]["redone"] is False and "previous_decision" not in r[0]
+
+
+def test_redo_of_a_number_not_in_the_drafts_is_reported_and_skipped(tmp_path, capsys):
+    s = redo(tmp_path, "y", [99, 1], drafts=[draft(1, "yes")])
+    assert s["missing"] == [99] and "[99]" in capsys.readouterr().out
+    assert [r["draft"]["number"] for r in lines(tmp_path / "reviewed.jsonl")] == [1]
+
+
+def test_redo_uses_the_current_draft_not_the_stored_one(tmp_path):
+    run(tmp_path, "y", drafts=[draft(1, "yes", reason="old reason")])
+    redo(tmp_path, "y", [1], drafts=[draft(1, "no", reason="new reason")])  # a regenerated draft says no
+    r = lines(tmp_path / "reviewed.jsonl")[0]
+    assert r["draft"]["reason"] == "new reason" and r["decision"] == "no"
+    assert r["previous_decision"]["draft"]["reason"] == "old reason"
+
+
+def test_main_passes_redo_numbers(tmp_path, monkeypatch):
+    p = tmp_path / "labels.jsonl"
+    p.write_text(json.dumps(draft(1, "yes")) + "\n")
+    monkeypatch.setattr(rl, "LABELS_PATH", p)
+    seen = {}
+    monkeypatch.setattr(rl, "review", lambda drafts, path, redo=None: seen.update(redo=redo, n=len(drafts)))
+    assert rl.main(["--redo", "141240", "135321"]) == 0 and seen == {"redo": [141240, 135321], "n": 1}
+    assert rl.main([]) == 0 and seen["redo"] is None
