@@ -5,7 +5,7 @@ Usage (from repo root, env loaded): python -m scripts.reading_pack 141240 135321
 Read-only: no model calls, no verdicts, no ranking, no hints. The thread is exactly what
 get_issue_thread returns (cut at the first maintainer reply, bots dropped), so the pack never
 shows more than the agent would see. The docs hits are search_docs(title, hybrid, k=5); the first 3 also get their full chunk text, then
-lines of the top 5 chunks that share words with the title (plain word overlap, no judgement).
+lines of the top 5 chunks that share words with the title and the head of the body (plain word overlap, no judgement).
 """
 import re
 import sys
@@ -20,6 +20,9 @@ OUT_DIR = Path("data/pack")
 SNIPPET_CHARS = 200
 TOP_K = 5
 MAX_EVIDENCE_LINES = 5
+MAX_SEARCH_WORDS = 8
+BODY_FALLBACK_CHARS = 1500
+BODY_STOP_HEADINGS = ("### kubernetes version", "### environment")
 EVIDENCE_LINE_CHARS = 200
 MIN_WORD_CHARS = 4
 MIN_WORD_HITS = 2
@@ -29,6 +32,8 @@ about after again also because been before being cannot could does doing done ea
 ever from have having here into just like many more most much must only other over same should some
 such than that their them then there these they this those through under until upon very want were what
 when where which while will with would your
+issue problem error please kindly request solution thanks thank regards team dear hello following using
+trying getting version cluster kubernetes kubectl
 """.split())
 FULL_TEXT_K = 3  # the first 3 of the top-5 hits also get their whole chunk
 ISSUE_URL = "https://github.com/kubernetes/kubernetes/issues/{}"
@@ -54,29 +59,57 @@ def get_state(number: int) -> str:
         return f"unknown ({type(e).__name__})"
 
 
-def title_words(title: str) -> list[str]:
-    """Lowercase content words of the title: no stopwords, at least MIN_WORD_CHARS long, first-seen order."""
-    words = re.findall(r"[a-z0-9]+", title.lower())
-    return list(dict.fromkeys(w for w in words if len(w) >= MIN_WORD_CHARS and w not in STOPWORDS))
+WORD_RE = re.compile(r"-{0,2}[a-z0-9][a-z0-9._/-]*")  # keeps resolv.conf, change-cause, --record whole
+SPECIAL = set("._/-")
+
+
+def body_head(body: str) -> str:
+    """Text before the first Kubernetes-version / Environment heading, else the first BODY_FALLBACK_CHARS."""
+    low = body.lower()
+    cuts = [i for h in BODY_STOP_HEADINGS if (i := low.find(h)) != -1]
+    return body[:min(cuts)] if cuts else body[:BODY_FALLBACK_CHARS]
+
+
+def _tokens(text: str) -> list[str]:
+    return [t.rstrip("._/-") for t in WORD_RE.findall(text.lower())]  # a sentence-ending dot is not part of a word
+
+
+def word_weight(word: str, title_set: set[str]) -> int:
+    """Higher for words in the title, words with . - / _ in them, and long words. Used to rank WORDS only."""
+    return (3 if word in title_set else 0) + (2 if SPECIAL & set(word) else 0) + (1 if len(word) > 8 else 0)
+
+
+def search_words(title: str, body: str) -> list[str]:
+    """Top MAX_SEARCH_WORDS content words from the title and the head of the body, heaviest first (ties: first seen)."""
+    title_toks = _tokens(title)
+    seen = list(dict.fromkeys(_tokens(title) + _tokens(body_head(body))))
+    words = [w for w in seen if len(w) >= MIN_WORD_CHARS and w not in STOPWORDS]
+    title_set = set(title_toks)
+    return sorted(words, key=lambda w: -word_weight(w, title_set))[:MAX_SEARCH_WORDS]  # sorted() is stable
+
+
+def _has_word(line: str, word: str) -> bool:
+    return re.search(r"(?<![a-z0-9])" + re.escape(word) + r"(?![a-z0-9])", line) is not None
 
 
 def evidence_lines(text: str, words: list[str]) -> list[str]:
-    """Up to MAX_EVIDENCE_LINES lines of the chunk containing at least MIN_WORD_HITS of the words, in chunk order."""
-    out = []
+    """Up to MAX_EVIDENCE_LINES lines containing at least MIN_WORD_HITS of the words, most words first (ties: chunk order)."""
+    scored = []
     for line in text.splitlines():
         line = line.strip()
-        if line and len(set(re.findall(r"[a-z0-9]+", line.lower())) & set(words)) >= MIN_WORD_HITS:
-            out.append(line[:EVIDENCE_LINE_CHARS])
-            if len(out) == MAX_EVIDENCE_LINES:
-                break
-    return out
+        n = sum(_has_word(line.lower(), w) for w in words)
+        if line and n >= MIN_WORD_HITS:
+            scored.append((n, line[:EVIDENCE_LINE_CHARS]))
+    scored.sort(key=lambda t: -t[0])  # stable: equal counts keep chunk order
+    return [ln for _, ln in scored[:MAX_EVIDENCE_LINES]]
 
 
-def _evidence_section(title: str, hits: dict) -> str:
-    words = title_words(title)
+def _evidence_section(title: str, body: str, hits: dict) -> str:
+    words = search_words(title, body)
     lines = ["## Evidence lines", "",
-             f"Title words used: {', '.join(words) or '(none)'}. Lines of each chunk containing at least "
-             f"{MIN_WORD_HITS} of them (up to {MAX_EVIDENCE_LINES} per hit, cut at {EVIDENCE_LINE_CHARS} characters).", ""]
+             f"Title/body words used: {', '.join(words) or '(none)'}. Lines of each chunk containing at least "
+             f"{MIN_WORD_HITS} of them (up to {MAX_EVIDENCE_LINES} per hit, most words first, cut at "
+             f"{EVIDENCE_LINE_CHARS} characters).", ""]
     for i, p in enumerate(hits["passages"][:TOP_K], 1):
         found = evidence_lines(p["text"], words)
         lines.append(f"{i}. `{p['source']}`")
@@ -90,7 +123,7 @@ def render(number: int, state: str, thread: dict, hits: dict) -> str:
     if "error" in thread:
         head = [f"# Issue {number}", "", f"URL: {url}", f"State: {state}", "",
                 f"get_issue_thread returned an error: `{thread['error']}` {thread.get('detail', '')}".rstrip()]
-        return "\n".join(head) + "\n" + _docs_section(None, hits)
+        return "\n".join(head) + "\n" + _docs_section(None, "", hits)
     lines = [f"# {thread['title']}", "", f"URL: {url}", f"State: {state}", "",
              f"Author: {thread['author']}  ", f"Created: {thread['created_at']}  ",
              f"Labels: {', '.join(thread['labels']) or '(none)'}  ",
@@ -101,10 +134,10 @@ def render(number: int, state: str, thread: dict, hits: dict) -> str:
         lines += [f"### {c['author']} at {c['created_at']}", "", fence(c["body"]), ""]
     if not thread["comments"]:
         lines += ["(none)", ""]
-    return "\n".join(lines) + "\n" + _docs_section(thread["title"], hits)
+    return "\n".join(lines) + "\n" + _docs_section(thread["title"], thread["body"], hits)
 
 
-def _docs_section(title: str | None, hits: dict) -> str:
+def _docs_section(title: str | None, body: str, hits: dict) -> str:
     lines = [f"## search_docs top {TOP_K} (query = issue title, mode hybrid)", ""]
     if title is None:
         lines.append("(not run: no title because the thread fetch failed)")
@@ -118,7 +151,7 @@ def _docs_section(title: str | None, hits: dict) -> str:
             lines += ["<details>", f"<summary>{i}. {p['source']} | {p['heading']}</summary>", "",
                       fence(p["text"]), "", "</details>", ""]
         if title is not None:
-            lines += ["", _evidence_section(title, hits).rstrip("\n")]
+            lines += ["", _evidence_section(title, body, hits).rstrip("\n")]
     return "\n".join(lines) + "\n"
 
 

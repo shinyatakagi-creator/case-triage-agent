@@ -1,4 +1,4 @@
-from scripts.reading_pack import FULL_TEXT_K, SNIPPET_CHARS, build_pack, evidence_lines, fence, title_words
+from scripts.reading_pack import FULL_TEXT_K, SNIPPET_CHARS, build_pack, evidence_lines, fence, search_words
 
 THREAD = {"number": 1, "title": "pod stuck", "author": "alice", "created_at": "t0", "labels": ["kind/support"],
           "body": "body with ``` fence inside", "thread_truncated": True,
@@ -72,13 +72,44 @@ def test_no_full_text_section_when_search_errors(tmp_path):
     assert "Full text" not in text
 
 
-def test_title_words_drop_stopwords_short_words_and_duplicates():
-    assert title_words("Pod stuck in Pending with the scheduler, scheduler FAILED!") == [
-        "stuck", "pending", "scheduler", "failed"]  # "pod"/"in"/"the" are short; "with" is a stopword
-    assert title_words("a an of to") == []
+def test_noise_words_short_words_and_duplicates_are_dropped():
+    got = search_words("Pod stuck in Pending with the scheduler, scheduler FAILED!", "")
+    assert sorted(got) == ["failed", "pending", "scheduler", "stuck"]  # "pod"/"in"/"the" short; "with" stopword
+    noise = "issue problem error please kindly request solution thanks thank regards team dear hello following"
+    noise += " using trying getting would could should after before version cluster kubernetes kubectl"
+    assert search_words(noise, noise) == []
+    assert search_words("a an of to", "") == []
 
 
-def test_evidence_lines_need_two_distinct_words_and_cap_at_five():
+def test_body_words_are_used_and_the_body_is_cut_at_the_version_heading():
+    body = "The coredns pods crash with a loop\n### Kubernetes version\nsecretword deployed"
+    got = search_words("DNS broken", body)
+    assert "coredns" in got and "crash" in got and "secretword" not in got
+    assert "secretword" not in search_words("t", "x\n### Environment\nsecretword")  # either heading cuts
+    assert "tailword" not in search_words("t", "x" * 1500 + " tailword")  # no heading: first 1,500 chars
+    assert "headword" in search_words("t", "headword " + "x" * 2000)
+
+
+def test_dotted_and_hyphenated_words_are_kept_whole_and_weighted():
+    body = "edit /etc/resolv.conf then check --record and change-cause. Also plainword other plainish."
+    got = search_words("zzzz", body)
+    assert "etc/resolv.conf" in got  # the token starts at the first letter, so the leading slash is not part of it
+    assert "--record" in got and "change-cause" in got and "cause" not in got  # trailing dot dropped, not split
+    assert got.index("change-cause") < got.index("plainword")  # special characters outrank a plain word
+
+
+def test_title_words_outrank_body_words_and_long_words_outrank_short():
+    assert search_words("scheduler", "dnsmasq-conf extraordinarily lengthy")[:1] == ["scheduler"]  # title 3 > special 2
+    got = search_words("zzzz", "short words extraordinarily")
+    assert got.index("extraordinarily") < got.index("short")  # len > 8 gets +1
+
+
+def test_search_words_capped_at_eight():
+    body = " ".join(f"word{i:02d}x" for i in range(20))
+    assert len(search_words("title", body)) == 8
+
+
+def test_evidence_lines_need_two_distinct_words_whole_words_and_cap_at_five():
     words = ["pending", "scheduler"]
     text = "\n".join(["pending only", "pending pending pending", "scheduler and pending together",
                       "  Scheduler: PENDING  "] + [f"pending scheduler {i}" for i in range(10)])
@@ -86,17 +117,27 @@ def test_evidence_lines_need_two_distinct_words_and_cap_at_five():
     assert got[:2] == ["scheduler and pending together", "Scheduler: PENDING"] and len(got) == 5
     assert evidence_lines("pending only\nnothing", words) == []
     assert evidence_lines("pendingly schedulers", words) == []  # whole words only
+    assert evidence_lines("see /etc/resolv.conf and pending", ["resolv.conf", "pending"]) == [
+        "see /etc/resolv.conf and pending"]  # a path prefix does not hide a dotted word
+
+
+def test_evidence_lines_are_ordered_by_word_count_then_chunk_order():
+    words = ["aaaa", "bbbb", "cccc"]
+    text = "aaaa bbbb first\naaaa bbbb cccc three\naaaa bbbb second\ncccc aaaa third two"
+    assert evidence_lines(text, words) == ["aaaa bbbb cccc three", "aaaa bbbb first", "aaaa bbbb second",
+                                          "cccc aaaa third two"]
+    assert len(evidence_lines("aaaa bbbb " + "y" * 400, words)[0]) == 200
 
 
 def test_evidence_section_lists_words_hit_numbers_and_no_match_message(tmp_path):
     hits = {"passages": [passage(0, "intro\nthe pod stays pending until the scheduler runs\nend"),
                          passage(1, "nothing relevant here")] + [passage(i, "x") for i in range(2, 7)],
             "cost_usd": 0, "latency_ms": 0, "cache_hit": False}
-    thread = {**THREAD, "title": "Pod pending, scheduler never runs"}
+    thread = {**THREAD, "title": "Pod pending, scheduler never runs", "body": "retries forever"}
     text, _, _ = pack(tmp_path, thread=thread, hits=hits)
     ev = text.split("## Evidence lines")[1]
     assert text.index("## Evidence lines") > text.index("## Full text of the top 3 chunks")
-    assert "Title words used: pending, scheduler, never, runs" in ev
+    assert "Title/body words used: scheduler, pending, never, runs, retries, forever" in ev  # scheduler: title + long
     assert "1. `docs/p0`" in ev and "- the pod stays pending until the scheduler runs" in ev
     assert "2. `docs/p1`\n   - no matching lines" in ev
     assert "6. " not in ev and ev.count("no matching lines") == 4  # hits 2-5; only the top 5 get a block
