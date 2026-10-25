@@ -88,3 +88,13 @@ Public repo, live endpoint, eval table with counts and the baseline comparison, 
 - Elastic Cloud trial terms and pricing.
 - Whether in-process retrieval matches the Elasticsearch numbers (parity check on evening 7).
 - Live GitHub calls and the rag-hybrid /search call from the evening-1 code have not been run against the real services (only the unit tests and a local tool listing were run).
+
+## Findings 25 Oct
+
+Facts only.
+
+- Candidate pull (kind/support, `--limit 100`, real GitHub, read-only token): 100 pulled; body >= 200 chars: 96; >= 1 human comment by someone else: 100 (the script already requires >= 3 GitHub comments); has maintainer reply: 77; substantive (both of the above): 96; median body chars: 1738. Unanswerable-pool pulls not yet run.
+- rag-hybrid `/search` hybrid mode works (HTTP 200, RRF scores about 0.03; bm25 scores about 13, so scores are not comparable across modes). An earlier 502 `embedding_unavailable` was an invalid OpenAI key in rag-hybrid's `.env`, since fixed. Uncached query embedding cost 8e-08 USD (3.4 s); a cached one reports cost_usd 0.0 (query-embedding cache). Cost and latency are reported from uncached runs only, and `cache_hit` is recorded for each search call.
+- Docs index is pinned to kubernetes/website commit 6c42e266.
+- Baseline changed (supersedes the Eval section's "rag-hybrid answering in one shot"): single-shot with the same Haiku model: one `search_docs` call on the same truncated thread, then an answer in the TriageNote format. rag-hybrid `/ask` (Sonnet) is a separate second reference, not the baseline.
+- Order change: the in-process retrieval backend moves to evening 7 as in the timeline; agent loop and eval harness skeleton are built first.
