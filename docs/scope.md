@@ -91,11 +91,11 @@ Verified (RAN):
 - Substantive kind/support pool: 96 of 100 pulled candidates are substantive (see Findings 25 Oct). The 23 threads with no maintainer reply were not hand-checked for a pasted fix.
 - Live GitHub: `scripts.pull_candidates` ran against the real API (listing and comments, read-only token). The `get_issue_thread` MCP tool itself has not been called live.
 - rag-hybrid `/search`: bm25 and hybrid ran live and `search_docs` normalises both to `SearchResult`. Hybrid depends on rag-hybrid's OpenAI key (it was invalid once and was fixed).
-- Agent loop, baseline, ledger and eval harness: 196 unit tests pass, all on fakes and synthetic fixtures.
+- Agent loop, baseline, ledger and eval harness: 211 unit tests pass, all on fakes and synthetic fixtures.
 - The `anthropic` package is installed and pinned (2.3.0); the adapter constructs a client offline.
 
 Not verified:
-- Any real model call: `AnthropicLLM.complete`, the system prompts, the `final_answer` tool format, and the model ID `claude-haiku-5-5` are untested. Prices and the cap defaults ($0.05 per run, $1.00 per day) are placeholders.
+- Any real model call: `AnthropicLLM.complete`, the system prompts, the `final_answer` tool format, and the model ID `claude-haiku-5-5` are untested. Input/output prices and the cap defaults ($0.05 per run, $1.00 per day) are placeholders. Cache prices for claude-haiku-5-5 and claude-haiku-4-5-20251001 are the owner's figures (25 Oct), applied to unit tests only; the >100k tier keyed on prompt size (input + cache tokens) is my reading of them. The haiku-5-5 cache rates imply a base input price of about 0.10 per MTok, which does not match the 1.0 placeholder.
 - `MAX_PLAUSIBLE_TOKENS` (10**7) and `MAX_TOOL_CALLS` (8) are chosen, not measured.
 - The spend-ledger lock was tested by the reviewer with 4 processes, not under real load.
 - The agent, the baseline and the eval harness have not run on a real issue or on any labelled case.

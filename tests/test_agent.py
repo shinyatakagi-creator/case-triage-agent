@@ -383,3 +383,25 @@ def test_literal_marker_string_cannot_collide_with_invalid_citation(ledger):
 def test_token_plausibility_bound_is_ten_million():
     assert MAX_PLAUSIBLE_TOKENS == 10**7
     assert agent._count_ok(10**7) and not agent._count_ok(10**7 + 1)
+
+
+def test_cache_tokens_are_priced_and_absent_ones_are_zero(ledger):
+    t = final("cant_tell", citations=[])
+    plain = run_agent(URL, FakeTools(), FakeLLM([dict(t)]), ledger)
+    t.update(cache_write_5m_tokens=1000, cache_write_1h_tokens=2000, cache_read_tokens=3000)
+    ledger2 = Ledger(per_run_cap=1, per_day_cap=1, path=ledger.path.with_name("s2.json"))
+    cached = run_agent(URL, FakeTools(), FakeLLM([t]), ledger2)
+    extra = (1000 * 0.125 + 2000 * 0.20 + 3000 * 0.01) / 1e6
+    assert cached["note"]["outcome"] == "cant_tell"
+    assert cached["note"]["cost_usd"] == pytest.approx(plain["note"]["cost_usd"] + extra)
+
+
+@pytest.mark.parametrize("field,bad", [("cache_read_tokens", "x"), ("cache_read_tokens", None),
+                                       ("cache_write_5m_tokens", -1), ("cache_write_1h_tokens", float("nan")),
+                                       ("cache_read_tokens", 10**400)])
+def test_invalid_cache_field_is_error_but_known_cost_counted(ledger, field, bad):
+    t = final("cant_tell", citations=[])
+    t[field] = bad
+    res = run_agent(URL, FakeTools(), FakeLLM([t]), ledger)
+    assert res["note"]["outcome"] == "error" and "token counts" in res["reason"]
+    assert res["note"]["cost_usd"] > 0 and ledger.load_error is None

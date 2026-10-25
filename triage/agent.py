@@ -8,7 +8,8 @@ Known limitations (accepted):
   note.tool_calls; the only bound on how many a model can emit is MAX_STEPS turns.
 - A model turn whose token counts are missing or invalid is charged for the known fields only, so
   its real cost may be under-counted.
-- Cache-token usage fields are ignored (see llm.AnthropicLLM).
+- Cache tiers are keyed on prompt size (input + cache tokens > 100k); that is a reading of the
+  owner's price list, and input/output rates are not tiered (see llm.py).
 """
 import json
 import math
@@ -259,9 +260,13 @@ def ask(llm: LLM, ledger: Ledger, system: str, messages: list[dict], specs: list
         return Asked(None, 0.0, f"model call failed: {e!r}"[:200], False)
     if not isinstance(turn, dict):
         return Asked(None, 0.0, "malformed model turn: not a dict", True)
-    tokens = [turn.get("input_tokens"), turn.get("output_tokens")]
-    ok = [_count_ok(t) for t in tokens]
-    usd = ledger.charge(llm.model, tokens[0] if ok[0] else 0, tokens[1] if ok[1] else 0)
+    # input/output must be present and valid. The cache fields may be absent (= 0), but a present
+    # value that is invalid is an error like any other bad count.
+    required = [turn.get("input_tokens"), turn.get("output_tokens")]
+    cache = [turn.get(k, 0) for k in ("cache_write_5m_tokens", "cache_write_1h_tokens", "cache_read_tokens")]
+    counts = required + cache
+    ok = [_count_ok(t) for t in counts]
+    usd = ledger.charge(llm.model, *(t if good else 0 for t, good in zip(counts, ok)))
     reasons = []
     if not all(ok):
         reasons.append("model turn has missing or invalid token counts; cost counted from known fields only")

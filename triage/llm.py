@@ -8,7 +8,7 @@ import tempfile
 from contextlib import contextmanager
 from datetime import date
 from pathlib import Path
-from typing import Protocol, TypedDict
+from typing import NamedTuple, NotRequired, Protocol, TypedDict
 
 # UNVERIFIED PLACEHOLDER: this model id was not checked against Anthropic's model list.
 DEFAULT_MODEL = "claude-haiku-5-5"  # config value, override with env TRIAGE_MODEL
@@ -18,10 +18,30 @@ def model_name() -> str:
     return os.environ.get("TRIAGE_MODEL", DEFAULT_MODEL)
 
 
-# UNVERIFIED PLACEHOLDER prices, USD per million tokens (input, output). Invented, not checked
-# against any price list. Check them before trusting any cost number or cap derived from them.
-PRICES_USD_PER_MTOK: dict[str, tuple[float, float]] = {
-    "claude-haiku-5-5": (1.0, 5.0),
+class ModelPrice(NamedTuple):
+    """USD per million tokens. The long_* rates apply when the prompt (input + cache read + cache
+    write tokens) exceeds LONG_PROMPT_TOKENS; for models without tiers they equal the short rates."""
+    input: float
+    output: float
+    write_5m: float
+    write_1h: float
+    read: float
+    long_write_5m: float
+    long_write_1h: float
+    long_read: float
+
+
+LONG_PROMPT_TOKENS = 100_000
+
+# input/output rates are UNVERIFIED PLACEHOLDERS: the owner has not given them. The cache rates are
+# the owner's figures (25 Oct); the owner gave only cache rates, and the tier rule below
+# (prompt size > 100k) is my reading of "<=100k / >100k". Input/output are NOT tiered here.
+# Note: the haiku-5-5 cache rates imply a base input price of about 0.10 (0.50 above 100k) by the
+# usual 1.25x / 2x / 0.1x multipliers, which does not match the 1.0 placeholder; fix before trusting costs.
+# haiku-4-5-20251001 input 1.0 / output 5.0 were not given either (from memory, UNVERIFIED).
+PRICES_USD_PER_MTOK: dict[str, ModelPrice] = {
+    "claude-haiku-5-5": ModelPrice(1.0, 5.0, 0.125, 0.20, 0.01, 0.625, 1.00, 0.05),
+    "claude-haiku-4-5-20251001": ModelPrice(1.0, 5.0, 1.25, 2.00, 0.10, 1.25, 2.00, 0.10),
 }
 
 DEFAULT_RUN_CAP_USD = 0.05  # placeholder; the owner sets real caps
@@ -34,6 +54,10 @@ class Turn(TypedDict):
     content: list[dict]
     input_tokens: int
     output_tokens: int
+    # Cache usage, all optional: absent means no caching (0). A present but invalid value is an error.
+    cache_write_5m_tokens: NotRequired[int]
+    cache_write_1h_tokens: NotRequired[int]
+    cache_read_tokens: NotRequired[int]
 
 
 class LLM(Protocol):
@@ -46,9 +70,10 @@ class AnthropicLLM:
     """UNRUN: never exercised against the real API (the `anthropic` package is installed and pinned,
     but no request has been made; complete() has only been read, not executed).
 
-    Token usage: only input_tokens and output_tokens are read. Cache-token fields
-    (cache_creation_input_tokens, cache_read_input_tokens) are ignored, so cost is misstated if
-    prompt caching is ever turned on.
+    Token usage: input_tokens, output_tokens and the cache fields are read. Cache writes are split
+    5-minute / 1-hour from usage.cache_creation when the SDK provides it; if only the combined
+    cache_creation_input_tokens is present it is priced at the dearer 1-hour rate. A None cache
+    field is read as 0.
 
     The SDK retries failed requests internally (max_retries, default 2), which would spend
     money outside the Ledger's view. max_retries is set to 0 here so every paid attempt goes
@@ -72,10 +97,19 @@ class AnthropicLLM:
                 content.append({"type": "text", "text": b.text})
             elif b.type == "tool_use":
                 content.append({"type": "tool_use", "id": b.id, "name": b.name, "input": b.input})
-        return Turn(content=content, input_tokens=r.usage.input_tokens, output_tokens=r.usage.output_tokens)
+        u = r.usage
+        n = lambda v: v if v is not None else 0  # noqa: E731  SDK reports None when a cache field is unused
+        split = getattr(u, "cache_creation", None)
+        if split is not None:
+            w5, w1 = n(split.ephemeral_5m_input_tokens), n(split.ephemeral_1h_input_tokens)
+        else:
+            w5, w1 = 0, n(getattr(u, "cache_creation_input_tokens", None))  # unsplit: dearer rate, never under-count
+        return Turn(content=content, input_tokens=u.input_tokens, output_tokens=u.output_tokens,
+                    cache_write_5m_tokens=w5, cache_write_1h_tokens=w1,
+                    cache_read_tokens=n(getattr(u, "cache_read_input_tokens", None)))
 
 
-def price(model: str) -> tuple[float, float]:
+def price(model: str) -> ModelPrice:
     """Raises on an unknown model: a missing price must never silently become a free call."""
     try:
         return PRICES_USD_PER_MTOK[model]
@@ -93,11 +127,16 @@ def _finite_nonneg(x) -> bool:
     return isinstance(x, int) and 0 <= x <= sys.float_info.max
 
 
-def cost_usd(model: str, input_tokens: int, output_tokens: int) -> float:
-    p_in, p_out = price(model)
-    if not (_finite_nonneg(input_tokens) and _finite_nonneg(output_tokens)):
-        raise ValueError(f"invalid token counts: {input_tokens!r}, {output_tokens!r}")
-    return (input_tokens * p_in + output_tokens * p_out) / 1_000_000
+def cost_usd(model: str, input_tokens: int, output_tokens: int, cache_write_5m: int = 0,
+             cache_write_1h: int = 0, cache_read: int = 0) -> float:
+    p = price(model)
+    counts = (input_tokens, output_tokens, cache_write_5m, cache_write_1h, cache_read)
+    if not all(_finite_nonneg(c) for c in counts):
+        raise ValueError(f"invalid token counts: {counts!r}")
+    long = input_tokens + cache_write_5m + cache_write_1h + cache_read > LONG_PROMPT_TOKENS
+    w5, w1, rd = (p.long_write_5m, p.long_write_1h, p.long_read) if long else (p.write_5m, p.write_1h, p.read)
+    total = input_tokens * p.input + output_tokens * p.output + cache_write_5m * w5 + cache_write_1h * w1 + cache_read * rd
+    return total / 1_000_000
 
 
 class Ledger:
@@ -188,10 +227,11 @@ class Ledger:
             self.load_error = f"spend ledger write failed: {e!r}"[:200]
         return usd
 
-    def charge(self, model: str, input_tokens: int, output_tokens: int) -> float:
+    def charge(self, model: str, input_tokens: int, output_tokens: int, cache_write_5m: int = 0,
+               cache_write_1h: int = 0, cache_read: int = 0) -> float:
         price(model)  # raises on unknown model
         try:
-            usd = cost_usd(model, input_tokens, output_tokens)
+            usd = cost_usd(model, input_tokens, output_tokens, cache_write_5m, cache_write_1h, cache_read)
         except ValueError as e:
             self.load_error = f"invalid charge: {e}"[:200]
             return 0.0
