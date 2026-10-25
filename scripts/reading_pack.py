@@ -79,10 +79,23 @@ def word_weight(word: str, title_set: set[str]) -> int:
     return (3 if word in title_set else 0) + (2 if SPECIAL & set(word) else 0) + (1 if len(word) > 8 else 0)
 
 
+def _with_segments(tokens: list[str]) -> list[str]:
+    """Each token followed by its '/'-separated segments, so a path or URL also yields its parts.
+
+    Short segments and stopwords are filtered later like any other word (etc/resolv.conf -> etc/resolv.conf,
+    resolv.conf; "etc" is under MIN_WORD_CHARS)."""
+    out = []
+    for t in tokens:
+        out.append(t)
+        if "/" in t:
+            out += [seg for seg in (x.strip("._-") for x in t.split("/")) if seg]
+    return out
+
+
 def search_words(title: str, body: str) -> list[str]:
     """Top MAX_SEARCH_WORDS content words from the title and the head of the body, heaviest first (ties: first seen)."""
-    title_toks = _tokens(title)
-    seen = list(dict.fromkeys(_tokens(title) + _tokens(body_head(body))))
+    title_toks = _with_segments(_tokens(title))
+    seen = list(dict.fromkeys(title_toks + _with_segments(_tokens(body_head(body)))))
     words = [w for w in seen if len(w) >= MIN_WORD_CHARS and w not in STOPWORDS]
     title_set = set(title_toks)
     return sorted(words, key=lambda w: -word_weight(w, title_set))[:MAX_SEARCH_WORDS]  # sorted() is stable

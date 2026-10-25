@@ -93,7 +93,7 @@ def test_body_words_are_used_and_the_body_is_cut_at_the_version_heading():
 def test_dotted_and_hyphenated_words_are_kept_whole_and_weighted():
     body = "edit /etc/resolv.conf then check --record and change-cause. Also plainword other plainish."
     got = search_words("zzzz", body)
-    assert "etc/resolv.conf" in got  # the token starts at the first letter, so the leading slash is not part of it
+    assert "etc/resolv.conf" in got and "resolv.conf" in got  # whole token and its segment
     assert "--record" in got and "change-cause" in got and "cause" not in got  # trailing dot dropped, not split
     assert got.index("change-cause") < got.index("plainword")  # special characters outrank a plain word
 
@@ -146,3 +146,31 @@ def test_evidence_section_lists_words_hit_numbers_and_no_match_message(tmp_path)
 def test_no_evidence_section_on_errors(tmp_path):
     assert "Evidence lines" not in pack(tmp_path, hits={"error": "search_failed"})[0]
     assert "Evidence lines" not in pack(tmp_path, thread={"error": "not_found"})[0]
+
+
+def test_path_word_is_split_into_whole_token_and_long_segments():
+    got = search_words("zzzz", "edit /etc/resolv.conf now")
+    assert "etc/resolv.conf" in got and "resolv.conf" in got
+    assert "etc" not in got  # under 4 characters
+    assert evidence_lines("nameserver set in resolv.conf\nresolv.conf and pending", ["resolv.conf", "pending"]) == [
+        "resolv.conf and pending"]  # a chunk that only says resolv.conf now matches
+
+
+def test_segment_is_weighted_as_dotted_word_and_title_segments_get_title_weight():
+    # dotted segment (2) outranks the plain long-ish word; a title path's segment counts as a title word (3)
+    got = search_words("zzzz", "plainer /var/lib/some.dir")
+    assert got.index("some.dir") < got.index("plainer")
+    assert search_words("see /opt/pkgname", "other-thing")[:3] == ["opt/pkgname", "pkgname", "other-thing"]
+
+
+def test_url_like_token_gives_whole_token_and_useful_segments_only():
+    got = search_words("zzzz", "see https://github.com/kubernetes/kubernetes/issues/123 for details")
+    assert "github.com/kubernetes/kubernetes/issues/123" in got
+    assert "github.com" in got and "issues" in got
+    assert "kubernetes" not in got and "123" not in got  # stopword / under 4 characters
+
+
+def test_segments_are_deduplicated_and_the_cap_still_holds():
+    body = "a/bbbb/bbbb/bbbb a/bbbb " + " ".join(f"word{i:02d}x" for i in range(20))
+    got = search_words("t", body)
+    assert got.count("bbbb") == 1 and len(got) == 8
