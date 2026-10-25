@@ -3,7 +3,7 @@
 Reads case files from whatever path it is given. It never writes anywhere.
 """
 import json
-from typing import Callable, Literal
+from typing import Callable, Literal, NamedTuple
 
 from triage.contracts import (
     BACKENDS, EvalCase, EvalResult, SearchResult, TriageNote, contract_problems,
@@ -57,19 +57,27 @@ def _cited(note: TriageNote) -> list[str]:
     return list(dict.fromkeys(c["source"] for c in note["citations"]))
 
 
-def doc_correct(cited: list[str], gold: list[str], match: Match) -> bool:
-    """Not applicable (no gold) is stored as False; summarise() only counts answerable cases.
+def doc_correct(valid_cited: list[str], gold: list[str], match: Match) -> bool:
+    """Pass only citations this run's search results returned (the caller filters them).
 
-    "any":   at least one gold page is among the cited pages.
-    "exact": the set of cited pages equals the set of gold pages (nothing extra, nothing missing).
+    No gold (unanswerable) is "not applicable", stored as False; summarise() only counts
+    answerable cases.
+    "any":   at least one gold page is among the valid citations.
+    "exact": the set of valid citations equals the set of gold pages (nothing extra, nothing missing).
     """
     if not gold:
         return False
     if match == "any":
-        return bool(set(cited) & set(gold))
+        return bool(set(valid_cited) & set(gold))
     if match == "exact":
-        return set(cited) == set(gold)
+        return set(valid_cited) == set(gold)
     raise ValueError(f"match must be 'any' or 'exact', got {match!r}")
+
+
+class EvalRun(NamedTuple):
+    results: list[EvalResult]
+    search_results_by_case: dict[str, list[SearchResult]]
+    errors: dict[str, str]  # case_id -> exception message; kept out of EvalResult (frozen)
 
 
 def _failed_result(case: EvalCase, system: str, backend: str) -> EvalResult:
@@ -78,33 +86,45 @@ def _failed_result(case: EvalCase, system: str, backend: str) -> EvalResult:
             "correct_doc_cited": False, "steps": 0, "cost_usd": 0.0, "failed": True}
 
 
-def run_eval(cases: list[EvalCase], runner: Runner, system: Literal["agent", "baseline"],
-             backend: str, *, match: Match) -> tuple[list[EvalResult], dict[str, list[SearchResult]]]:
-    """Run every case. A raising runner becomes a failed 'error' result, never an abort.
+def _score(case: EvalCase, note: TriageNote, sr: list[SearchResult], system: str,
+           backend: str, match: Match) -> EvalResult:
+    cited = _cited(note)  # cited_docs is what the note CITED, valid or not
+    returned = {p["source"] for r in sr for p in r["passages"]}
+    problems = contract_problems(note, sr)
+    # A hallucinated gold citation must not score as a correct doc.
+    valid = [d for d in cited if d in returned]
+    return {
+        "case_id": case["id"], "system": system, "backend": backend,
+        "outcome": note["outcome"], "category": note["category"], "cited_docs": cited,
+        "correct_category": note["category"] == case["category"],
+        "correct_doc_cited": doc_correct(valid, case["gold_docs"], match),
+        "steps": note["steps"], "cost_usd": note["cost_usd"],
+        "failed": note["outcome"] in ("error", "step_cap") or bool(problems),
+    }
 
-    Returns (results, search_results_by_case); the second feeds metrics.search_stats.
+
+def run_eval(cases: list[EvalCase], runner: Runner, system: Literal["agent", "baseline"],
+             backend: str, *, match: Match) -> EvalRun:
+    """Run every case. Anything that goes wrong for one case (runner raising, malformed note
+    or search result) becomes a failed 'error' result plus an entry in `errors`; never an abort.
+
     `match` is required with no default: the owner has not decided yet.
     """
     if match not in ("any", "exact"):
         raise ValueError(f"match must be 'any' or 'exact', got {match!r}")
     if backend not in BACKENDS:
         raise ValueError(f"backend must be one of {BACKENDS}, got {backend!r}")
-    results, searches = [], {}
+    ids = [c["id"] for c in cases]
+    if len(set(ids)) != len(ids):
+        raise ValueError("duplicate case ids in cases")
+    results, searches, errors = [], {}, {}
     for case in cases:
         try:
             note, sr = runner(case)
-        except Exception:  # noqa: BLE001 - one bad case must not end the eval
+            results.append(_score(case, note, sr, system, backend, match))
+            searches[case["id"]] = sr
+        except Exception as e:  # noqa: BLE001 - one bad case must not end the eval
             results.append(_failed_result(case, system, backend))
             searches[case["id"]] = []
-            continue
-        cited = _cited(note)
-        failed = note["outcome"] in ("error", "step_cap") or bool(contract_problems(note, sr))
-        results.append({
-            "case_id": case["id"], "system": system, "backend": backend,
-            "outcome": note["outcome"], "category": note["category"], "cited_docs": cited,
-            "correct_category": note["category"] == case["category"],
-            "correct_doc_cited": doc_correct(cited, case["gold_docs"], match),
-            "steps": note["steps"], "cost_usd": note["cost_usd"], "failed": failed,
-        })
-        searches[case["id"]] = sr
-    return results, searches
+            errors[case["id"]] = f"{type(e).__name__}: {e}"
+    return EvalRun(results, searches, errors)

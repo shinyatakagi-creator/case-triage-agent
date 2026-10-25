@@ -3,6 +3,7 @@
 Bootstrap: percentile interval over cases, N_RESAMPLES resamples, fixed SEED, 95%.
 With 40 cases the intervals are wide on purpose; that is the point.
 """
+import math
 import random
 import statistics
 
@@ -11,6 +12,7 @@ from triage.contracts import EvalCase, EvalResult, SearchResult
 N_RESAMPLES = 10_000
 SEED = 0
 CONFIDENCE = 0.95
+ALPHA = 0.05  # sign-test threshold for "clear"
 
 
 def _ci(values: list[float]) -> tuple[float, float] | None:
@@ -26,8 +28,9 @@ def _ci(values: list[float]) -> tuple[float, float] | None:
 
 def _rate(flags: list[bool]) -> dict:
     k, n = sum(flags), len(flags)
+    ci = _ci([float(f) for f in flags])
     return {"k": k, "n": n, "pct": 100 * k / n if n else None,
-            "ci_pct": tuple(100 * x for x in ci) if (ci := _ci([float(f) for f in flags])) else None}
+            "ci_pct": tuple(100 * x for x in ci) if ci else None}
 
 
 def _num(xs: list[float]) -> dict:
@@ -38,66 +41,110 @@ def _num(xs: list[float]) -> dict:
 def summarise(results: list[EvalResult], cases: list[EvalCase]) -> dict:
     by_id = {c["id"]: c for c in cases}
     rows = [(r, by_id[r["case_id"]]) for r in results]  # KeyError on unknown id is deliberate
-    ans = [(r, c) for r, c in rows if c["gold_docs"]]
-    unans = [(r, c) for r, c in rows if not c["gold_docs"]]
+    ans = [(r, c) for r, c in rows if c["answerable"]]
+    unans = [(r, c) for r, c in rows if not c["answerable"]]
+    ok = [r for r, _ in rows if not r["failed"]]
+    bad = [r for r, _ in rows if r["failed"]]
     cant = lambda grp: _rate([r["outcome"] == "cant_tell" for r, _ in grp])  # noqa: E731
     return {
         "n_cases": len(rows),
-        "category_accuracy": _rate([r["correct_category"] for r, _ in rows]),
-        # answerable only: for unanswerable cases correct_doc_cited is stored False = n/a
+        # headline: answerable only (the owner's category is only meaningful there)
+        "category_accuracy": _rate([r["correct_category"] for r, _ in ans]),
+        "category_accuracy_unanswerable": _rate([r["correct_category"] for r, _ in unans]),
+        # for unanswerable cases correct_doc_cited is stored False = n/a, so answerable only
         "correct_doc_cited": _rate([r["correct_doc_cited"] for r, _ in ans]),
-        "steps": _num([r["steps"] for r, _ in rows]),
-        "cost_usd": _num([r["cost_usd"] for r, _ in rows]),
+        # failed runs are excluded from these two; they are reported below instead
+        "steps": _num([r["steps"] for r in ok]),
+        "cost_usd": _num([r["cost_usd"] for r in ok]),
+        "failed_count": len(bad),
+        # errored runs record cost 0.0, so this is a lower bound
+        "failed_cost_usd_total": sum(r["cost_usd"] for r in bad),
         "failure_rate": _rate([r["failed"] for r, _ in rows]),
         "cant_tell_answerable": cant(ans),
         "cant_tell_unanswerable": cant(unans),
     }
 
 
+def sign_test_p(a: int, b: int) -> float:
+    """Exact two-sided sign test on discordant pairs (a wins vs b wins), H0: p = 0.5."""
+    d = a + b
+    if d == 0:
+        return 1.0
+    tail = sum(math.comb(d, i) for i in range(min(a, b) + 1)) / 2**d
+    return min(1.0, 2 * tail)
+
+
 def _paired(a: dict[str, bool], b: dict[str, bool]) -> dict:
-    ids = sorted(a.keys() & b.keys())
+    ids = sorted(a)
     diffs = [int(a[i]) - int(b[i]) for i in ids]
-    return {"n": len(ids), "agent_only": diffs.count(1), "baseline_only": diffs.count(-1),
-            "ties": diffs.count(0),
+    w, l = diffs.count(1), diffs.count(-1)
+    return {"n": len(ids), "agent_only": w, "baseline_only": l, "ties": diffs.count(0),
             "mean_diff": sum(diffs) / len(diffs) if diffs else None,
-            "ci": _ci([float(d) for d in diffs])}
+            "ci": _ci([float(d) for d in diffs]), "sign_p": sign_test_p(w, l)}
 
 
 def compare(agent_results: list[EvalResult], baseline_results: list[EvalResult],
             cases: list[EvalCase]) -> dict:
-    """Paired per-case wins. Doc comparison uses answerable cases only."""
-    answerable = {c["id"] for c in cases if c["gold_docs"]}
-    def flags(rs, key, only=None):
-        return {r["case_id"]: r[key] for r in rs if only is None or r["case_id"] in only}
+    """Paired per-case wins. Raises ValueError on duplicate or mismatched case ids.
+
+    Category and doc comparisons both use answerable cases only.
+    """
+    for name, rs in (("agent", agent_results), ("baseline", baseline_results)):
+        ids = [r["case_id"] for r in rs]
+        if len(set(ids)) != len(ids):
+            raise ValueError(f"duplicate case_id in {name} results")
+    if {r["case_id"] for r in agent_results} != {r["case_id"] for r in baseline_results}:
+        raise ValueError("agent and baseline results cover different case ids")
+    answerable = {c["id"] for c in cases if c["answerable"]}
+
+    def flags(rs, key):
+        return {r["case_id"]: r[key] for r in rs if r["case_id"] in answerable}
     return {
         "category": _paired(flags(agent_results, "correct_category"),
                             flags(baseline_results, "correct_category")),
-        "correct_doc": _paired(flags(agent_results, "correct_doc_cited", answerable),
-                               flags(baseline_results, "correct_doc_cited", answerable)),
+        "correct_doc": _paired(flags(agent_results, "correct_doc_cited"),
+                               flags(baseline_results, "correct_doc_cited")),
     }
 
 
 def verdict(paired: dict, label: str) -> str:
-    """'No clear difference' unless the paired bootstrap interval excludes zero."""
-    ci = paired["ci"]
-    counts = (f"agent-only {paired['agent_only']}, baseline-only {paired['baseline_only']}, "
-              f"ties {paired['ties']} of {paired['n']}")
-    if ci is not None and ci[0] > 0:
-        return f"{label}: agent clearly better ({counts}; 95% CI of mean diff {ci[0]:+.3f} to {ci[1]:+.3f})."
-    if ci is not None and ci[1] < 0:
-        return f"{label}: baseline clearly better ({counts}; 95% CI of mean diff {ci[0]:+.3f} to {ci[1]:+.3f})."
-    return (f"{label}: no clear difference ({counts}). With this few cases a gap of "
-            f"two or three is noise; do not claim a win.")
+    """Clear only if the bootstrap CI excludes zero AND the sign test has p < ALPHA."""
+    ci, w, l, n, p = paired["ci"], paired["agent_only"], paired["baseline_only"], paired["n"], paired["sign_p"]
+    counts = f"agent-only {w}, baseline-only {l}, ties {paired['ties']} of {n}"
+    if ci is not None and w + l > 0 and p < ALPHA:
+        detail = f"{counts}; 95% CI of mean diff {ci[0]:+.3f} to {ci[1]:+.3f}; sign test p={p:.4f}"
+        if ci[0] > 0:
+            return f"{label}: agent clearly better ({detail})."
+        if ci[1] < 0:
+            return f"{label}: baseline clearly better ({detail})."
+    if w + l == 0:
+        why = f"no case out of {n} differs"
+    else:
+        why = (f"only {w + l} of {n} cases differ ({w} vs {l}); exact sign test p={p:.3f}"
+               + ("" if ci is None else f", bootstrap CI {ci[0]:+.3f} to {ci[1]:+.3f}"))
+    return f"{label}: no clear difference ({counts}). {why.capitalize()}, which is within noise; do not claim a win."
+
+
+def _known(r) -> bool:
+    return (isinstance(r, dict) and isinstance(r.get("cache_hit"), bool)
+            and isinstance(r.get("cost_usd"), (int, float))
+            and isinstance(r.get("latency_ms"), (int, float)))
 
 
 def search_stats(search_results_by_case: dict[str, list[SearchResult]]) -> dict:
-    """Cost and latency come from uncached calls only (cached calls report cost 0)."""
+    """Cost and latency come from uncached calls only (cached calls report cost 0).
+
+    A result without a usable cache_hit (or cost/latency) is malformed: counted as
+    unknown_cache_status and excluded from every other number, never assumed uncached.
+    """
     calls = [r for rs in search_results_by_case.values() for r in rs]
-    uncached = [r for r in calls if not r["cache_hit"]]
+    good = [r for r in calls if _known(r)]
+    uncached = [r for r in good if not r["cache_hit"]]
     costs, lats = [r["cost_usd"] for r in uncached], [r["latency_ms"] for r in uncached]
     return {
         "calls": len(calls), "uncached_calls": len(uncached),
-        "cached_calls": len(calls) - len(uncached), "cache_hits": len(calls) - len(uncached),
+        "cached_calls": len(good) - len(uncached),  # = cache hits
+        "unknown_cache_status": len(calls) - len(good),
         "cost_usd_total": sum(costs),
         "cost_usd_mean": statistics.mean(costs) if costs else None,
         "latency_ms_mean": statistics.mean(lats) if lats else None,
@@ -114,19 +161,21 @@ def _fmt_rate(r: dict) -> str:
 
 def _fmt_num(x: dict, unit: str = "") -> str:
     if x["n"] == 0:
-        return "n/a"
-    return f"mean {x['mean']:.4g}{unit}, median {x['median']:.4g}{unit} (n={x['n']})"
+        return "n/a (0 non-failed cases)"
+    return f"mean {x['mean']:.4g}{unit}, median {x['median']:.4g}{unit} (n={x['n']} non-failed)"
 
 
 def format_table(summary: dict) -> str:
     rows = [
-        ("Category accuracy", _fmt_rate(summary["category_accuracy"])),
+        ("Category accuracy (answerable only)", _fmt_rate(summary["category_accuracy"])),
         ("Correct doc cited (answerable only)", _fmt_rate(summary["correct_doc_cited"])),
-        ("Steps per case", _fmt_num(summary["steps"])),
-        ("Cost per case", _fmt_num(summary["cost_usd"], " USD")),
+        ("Steps per case (failed runs excluded)", _fmt_num(summary["steps"])),
+        ("Cost per case (failed runs excluded)", _fmt_num(summary["cost_usd"], " USD")),
+        ("Failed runs", f"{summary['failed_count']} of {summary['n_cases']}, "
+                        f"cost recorded {summary['failed_cost_usd_total']:.4g} USD"),
         ("Failure rate", _fmt_rate(summary["failure_rate"])),
         ("Can't tell, answerable", _fmt_rate(summary["cant_tell_answerable"])),
         ("Can't tell, not answerable", _fmt_rate(summary["cant_tell_unanswerable"])),
+        ("(secondary) Category match, not answerable", _fmt_rate(summary["category_accuracy_unanswerable"])),
     ]
-    out = ["| Metric | Result |", "|---|---|"] + [f"| {m} | {v} |" for m, v in rows]
-    return "\n".join(out)
+    return "\n".join(["| Metric | Result |", "|---|---|"] + [f"| {m} | {v} |" for m, v in rows])
