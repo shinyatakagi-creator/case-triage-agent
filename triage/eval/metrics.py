@@ -132,7 +132,8 @@ def verdict(paired: dict, label: str) -> str:
         who = "agent" if ci[0] > 0 else "baseline"
         return f"{label}: {who} clearly better ({counts}; {ci_txt}; sign test p={p:.4f})."
     if ci_excl != sig:
-        return (f"{label}: no clear difference ({counts}). The two checks disagree: "
+        return (f"{label}: no clear difference ({counts}). {d} of {n} cases differ ({w} vs {l}). "
+                f"The two checks disagree: "
                 f"the bootstrap CI {'excludes' if ci_excl else 'includes'} zero ({ci_txt[len('bootstrap CI '):]}) but the "
                 f"exact sign test p={p:.3f} is {'below' if sig else 'not below'} {ALPHA}. "
                 f"Both must agree before calling it clear; do not claim a win.")
@@ -141,8 +142,12 @@ def verdict(paired: dict, label: str) -> str:
 
 
 def _num_ok(x) -> bool:
-    return (isinstance(x, (int, float)) and not isinstance(x, bool)
-            and math.isfinite(x) and x >= 0)
+    if isinstance(x, bool) or not isinstance(x, (int, float)):
+        return False
+    try:  # float() raises OverflowError for ints beyond float range (e.g. 10**400)
+        return math.isfinite(float(x)) and x >= 0
+    except OverflowError:
+        return False
 
 
 def _known(r) -> bool:

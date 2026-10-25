@@ -343,6 +343,7 @@ def test_verdict_checks_disagree_sign_significant_ci_includes_zero():
          "sign_p": sign_test_p(6, 0)}  # 2/64 = 0.03125
     v = verdict(p, "x")
     assert "no clear difference" in v and "disagree" in v and "includes zero" in v
+    assert "6 of 10 cases differ" in v
     assert "p=0.031" in v and "within noise" not in v
 
 
@@ -374,3 +375,14 @@ def test_compare_rejects_unknown_ids_and_missing_answerable(ev):
         compare(a, b, cs[:3])
     with pytest.raises(ValueError, match="missing from both"):
         compare(a[:3], b[:3], cs)
+
+
+def test_huge_int_cost_does_not_raise(eval_cases, ev):
+    s = search_stats({"a": [ev.sr(["x"], cost=10**400)]})
+    assert s["unknown_cache_status"] == 1 and s["uncached_calls"] == 0
+    t = ev.agent_table()
+    n = ev.note("answered", "A", ["fake/doc-one"], 2, 10**400)
+    t["fake-1"] = (n, [ev.sr(["fake/doc-one"])])
+    run = run_eval(eval_cases, ev.runner(t), "agent", "es", match="any")
+    r = ev.by_id(run.results)["fake-1"]
+    assert r["outcome"] == "error" and r["failed"] and "ValueError" in run.errors["fake-1"]

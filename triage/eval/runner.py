@@ -93,7 +93,12 @@ def _is_real(x, *, integer: bool) -> bool:
         return False
     if integer:
         return isinstance(x, int) and x >= 0
-    return isinstance(x, (int, float)) and math.isfinite(x) and x >= 0
+    if not isinstance(x, (int, float)):
+        return False
+    try:  # float() raises OverflowError for ints beyond float range (e.g. 10**400): invalid, not a crash
+        return math.isfinite(float(x)) and x >= 0
+    except OverflowError:
+        return False
 
 
 def _score(case: EvalCase, note: TriageNote, sr: list[SearchResult], system: str,
