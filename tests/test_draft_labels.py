@@ -96,6 +96,7 @@ def test_queries_and_dedupe_by_chunk_id(ledger, tmp_path):
     assert prompt.count("doc_id=docs/a") == 1 and "doc_id=docs/b" in prompt and "doc_id=docs/c" in prompt  # c1 once
     rec = json.loads((tmp_path / "labels.jsonl").read_text())
     assert rec["label"] == "yes" and rec["doc_ids"] == ["docs/a"] and rec["check_failures"] == []
+    assert rec["result_doc_ids"] == ["docs/a", "docs/b", "docs/c"]  # what a typed doc_id is checked against
     assert rec["model"] == MODEL and rec["cost_usd"] > 0.001 and rec["title"] == "Pod stuck in Pending"
     assert s["labels"] == {"yes": 1, "no": 0, "unsure": 0}
 
@@ -195,3 +196,22 @@ def test_numbers_from_candidates_file(tmp_path):
     f.write_text("\n".join(json.dumps({"number": n}) for n in (5, 6, 7)))
     ns = type("A", (), {"numbers": [], "from_file": str(f), "limit": 2})()
     assert dl.numbers_from_args(ns) == [5, 6]
+
+
+def test_day_cap_default_is_three_dollars_and_run_cap_default_unchanged(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    seen = {}
+
+    class Adapter:
+        model = MODEL
+        def __init__(self, model): pass
+        def model_available(self): return True
+
+    class SpyLedger:
+        def __init__(self, per_run_cap, per_day_cap, path): seen.update(run=per_run_cap, day=per_day_cap)
+
+    monkeypatch.setattr(dl, "AnthropicLLM", Adapter)
+    monkeypatch.setattr(dl, "Ledger", SpyLedger)
+    monkeypatch.setattr(dl, "run", lambda *a, **k: {"drafted": 0, "skipped_existing": 0, "labels": {}, "stopped": None,
+                                                    "issues_with_failed_checks": 0, "total_cost_usd": 0.0, "not_run": []})
+    assert dl.main(["1"]) == 0 and seen == {"run": 3.0, "day": 3.0}

@@ -149,7 +149,7 @@ def draft_one(number: int, llm, ledger, thread_tool, search_tool) -> dict | None
     so a later run drafts this issue). The caller has already checked the ledger once."""
     url = ISSUE_URL.format(number)
     rec = {"number": number, "label": "unsure", "doc_ids": [], "quotes": [], "reason": "", "check_failures": [],
-           "model": llm.model, "cost_usd": 0.0, "title": None, "url": url, "body_head": [], "model_label": None}
+           "model": llm.model, "cost_usd": 0.0, "title": None, "url": url, "body_head": [], "model_label": None, "result_doc_ids": []}
     thread = thread_tool(url)
     if "error" in thread:
         rec["check_failures"].append(f"get_issue_thread: {thread['error']}")
@@ -159,6 +159,7 @@ def draft_one(number: int, llm, ledger, thread_tool, search_tool) -> dict | None
     ledger.charge_usd(search_cost)  # search cost counts against the caps like model cost
     rec["cost_usd"] = search_cost
     rec["check_failures"] += failures
+    rec["result_doc_ids"] = list(dict.fromkeys(c["doc_id"] for c in chunks))  # lets the review step validate a typed doc_id
     if not chunks:
         rec["check_failures"].append("no search results, so no model call")
         return rec
@@ -243,7 +244,7 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--from", dest="from_file")
     ap.add_argument("--limit", type=int, default=10)
     ap.add_argument("--max-usd", type=float, default=3.00, help="cap for this run")
-    ap.add_argument("--max-day-usd", type=float, default=10.00, help="cap for all draft runs in one day")
+    ap.add_argument("--max-day-usd", type=float, default=3.00, help="cap for all draft runs in one day")
     args = ap.parse_args(argv)
     numbers = numbers_from_args(args)
     try:

@@ -5,6 +5,9 @@ Usage: python -m scripts.review_labels
 Reads data/drafts/labels.jsonl, appends each decision to data/drafts/reviewed.jsonl as it is made, and
 skips issues already reviewed, so quitting (q) and coming back loses nothing. Keys:
   y accept the draft label   n flip yes<->no   u mark unsure   o open the issue in the browser   q quit
+On an UNSURE draft: y = yes, n = no, u = keep unsure; the record says it was decided from unsure.
+Any "yes" needs a doc_id: the draft's own (if they are in that issue's results), else you type one, and a
+doc_id that is not in that issue's results is refused (empty input cancels).
 This writes only under data/drafts/. Promoting reviewed labels into data/eval/ is the owner's own step.
 """
 import json
@@ -56,21 +59,42 @@ def getkey() -> str:
 
 def decide(d: dict, key: str) -> tuple[str, str] | None:
     """(final label, action) for a decision key, or None if the key is not a decision."""
+    unsure = d["label"] == "unsure"
     if key == "y":
-        return d["label"], "accepted"
-    if key == "n" and d["label"] in FLIP:
-        return FLIP[d["label"]], "flipped"
+        return ("yes", "resolved") if unsure else (d["label"], "accepted")
+    if key == "n":
+        return ("no", "resolved") if unsure else (FLIP[d["label"]], "flipped")
     if key == "u":
         return "unsure", "unsure"
     return None
 
 
-def review(drafts, reviewed_path=REVIEWED_PATH, getkey=getkey, show=show, opener=webbrowser.open) -> dict:
+def choose_doc_ids(d: dict, readline) -> tuple[list[str], str] | None:
+    """doc_ids for a "yes" and where they came from, or None if the owner cancels.
+
+    The draft's own doc_ids are used if they are in that issue's results; otherwise the owner types one,
+    and anything not in the results is refused."""
+    allowed = d.get("result_doc_ids") or []
+    own = [x for x in d["doc_ids"] if x in allowed]
+    if own:
+        return own, "draft"
+    while True:
+        print("\ntype a doc_id from this issue's results (empty to cancel): ", end="", flush=True)
+        typed = readline().strip()
+        if not typed:
+            return None
+        if typed in allowed:
+            return [typed], "typed"
+        print(f"refused: {typed!r} is not in this issue's results" + ("" if allowed else " (none recorded)"), end="")
+
+
+def review(drafts, reviewed_path=REVIEWED_PATH, getkey=getkey, show=show, opener=webbrowser.open,
+           readline=sys.stdin.readline) -> dict:
     reviewed_path = guard_out_path(reviewed_path)
     reviewed_path.parent.mkdir(parents=True, exist_ok=True)
     seen = {r["draft"]["number"] for r in read_jsonl(reviewed_path)}
     todo = [d for d in drafts if d["number"] not in seen]
-    session = {"accepted": 0, "flipped": 0, "unsure": 0}
+    session = {"accepted": 0, "flipped": 0, "resolved": 0, "unsure": 0}
     for i, d in enumerate(todo, 1):
         show(d, f"{i}/{len(todo)}")
         while True:
@@ -83,13 +107,19 @@ def review(drafts, reviewed_path=REVIEWED_PATH, getkey=getkey, show=show, opener
                 continue
             got = decide(d, key)
             if got is None:
-                if key == "n":
-                    print("\n(n flips yes/no only; this draft is unsure: use y or u)", end="", flush=True)
                 continue
             label, action = got
+            ids, source = [], None
+            if label == "yes":
+                chosen = choose_doc_ids(d, readline)
+                if chosen is None:
+                    print("\n(cancelled; choose again)", end="", flush=True)
+                    continue
+                ids, source = chosen
             with open(reviewed_path, "a") as f:
-                f.write(json.dumps({"draft": d, "decision": label, "action": action,
-                                    "changed": label != d["label"]}) + "\n")
+                f.write(json.dumps({"draft": d, "decision": label, "action": action, "changed": label != d["label"],
+                                    "decided_from_unsure": d["label"] == "unsure" and label != "unsure",
+                                    "decision_doc_ids": ids, "doc_ids_source": source}) + "\n")
             session[action] += 1
             print(f"\n-> {label}")
             break
@@ -100,7 +130,8 @@ def summary(session: dict, reviewed_path: Path, quit_early: bool) -> dict:
     total = read_jsonl(reviewed_path)
     out = {**session, "reviewed_total": len(total), "quit_early": quit_early}
     print(f"this session: accepted {session['accepted']}, flipped {session['flipped']}, "
-          f"marked unsure {session['unsure']}; reviewed in total {len(total)}")
+          f"decided from unsure {session['resolved']}, kept/marked unsure {session['unsure']}; "
+          f"reviewed in total {len(total)}")
     return out
 
 
