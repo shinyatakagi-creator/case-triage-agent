@@ -4,7 +4,8 @@ Usage (from repo root, env loaded): python -m scripts.reading_pack 141240 135321
 
 Read-only: no model calls, no verdicts, no ranking, no hints. The thread is exactly what
 get_issue_thread returns (cut at the first maintainer reply, bots dropped), so the pack never
-shows more than the agent would see. The docs hits are search_docs(title, hybrid, k=5); the first 3 also get their full chunk text.
+shows more than the agent would see. The docs hits are search_docs(title, hybrid, k=5); the first 3 also get their full chunk text, then
+lines of the top 5 chunks that share words with the title (plain word overlap, no judgement).
 """
 import re
 import sys
@@ -18,6 +19,17 @@ from triage.thread import fetch_issue
 OUT_DIR = Path("data/pack")
 SNIPPET_CHARS = 200
 TOP_K = 5
+MAX_EVIDENCE_LINES = 5
+EVIDENCE_LINE_CHARS = 200
+MIN_WORD_CHARS = 4
+MIN_WORD_HITS = 2
+# Words too common to say anything about a match; the length filter drops the short ones already.
+STOPWORDS = frozenset("""
+about after again also because been before being cannot could does doing done each either else even
+ever from have having here into just like many more most much must only other over same should some
+such than that their them then there these they this those through under until upon very want were what
+when where which while will with would your
+""".split())
 FULL_TEXT_K = 3  # the first 3 of the top-5 hits also get their whole chunk
 ISSUE_URL = "https://github.com/kubernetes/kubernetes/issues/{}"
 
@@ -40,6 +52,37 @@ def get_state(number: int) -> str:
             return fetch_issue(number, client).get("state", "unknown")
     except Exception as e:  # read-only helper: a missing state must not stop the pack
         return f"unknown ({type(e).__name__})"
+
+
+def title_words(title: str) -> list[str]:
+    """Lowercase content words of the title: no stopwords, at least MIN_WORD_CHARS long, first-seen order."""
+    words = re.findall(r"[a-z0-9]+", title.lower())
+    return list(dict.fromkeys(w for w in words if len(w) >= MIN_WORD_CHARS and w not in STOPWORDS))
+
+
+def evidence_lines(text: str, words: list[str]) -> list[str]:
+    """Up to MAX_EVIDENCE_LINES lines of the chunk containing at least MIN_WORD_HITS of the words, in chunk order."""
+    out = []
+    for line in text.splitlines():
+        line = line.strip()
+        if line and len(set(re.findall(r"[a-z0-9]+", line.lower())) & set(words)) >= MIN_WORD_HITS:
+            out.append(line[:EVIDENCE_LINE_CHARS])
+            if len(out) == MAX_EVIDENCE_LINES:
+                break
+    return out
+
+
+def _evidence_section(title: str, hits: dict) -> str:
+    words = title_words(title)
+    lines = ["## Evidence lines", "",
+             f"Title words used: {', '.join(words) or '(none)'}. Lines of each chunk containing at least "
+             f"{MIN_WORD_HITS} of them (up to {MAX_EVIDENCE_LINES} per hit, cut at {EVIDENCE_LINE_CHARS} characters).", ""]
+    for i, p in enumerate(hits["passages"][:TOP_K], 1):
+        found = evidence_lines(p["text"], words)
+        lines.append(f"{i}. `{p['source']}`")
+        lines += [f"   - {ln}" for ln in found] or ["   - no matching lines"]
+        lines.append("")
+    return "\n".join(lines) + "\n"
 
 
 def render(number: int, state: str, thread: dict, hits: dict) -> str:
@@ -74,6 +117,8 @@ def _docs_section(title: str | None, hits: dict) -> str:
         for i, p in enumerate(hits["passages"][:FULL_TEXT_K], 1):
             lines += ["<details>", f"<summary>{i}. {p['source']} | {p['heading']}</summary>", "",
                       fence(p["text"]), "", "</details>", ""]
+        if title is not None:
+            lines += ["", _evidence_section(title, hits).rstrip("\n")]
     return "\n".join(lines) + "\n"
 
 

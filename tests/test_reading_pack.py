@@ -1,4 +1,4 @@
-from scripts.reading_pack import FULL_TEXT_K, SNIPPET_CHARS, build_pack, fence
+from scripts.reading_pack import FULL_TEXT_K, SNIPPET_CHARS, build_pack, evidence_lines, fence, title_words
 
 THREAD = {"number": 1, "title": "pod stuck", "author": "alice", "created_at": "t0", "labels": ["kind/support"],
           "body": "body with ``` fence inside", "thread_truncated": True,
@@ -70,3 +70,38 @@ def test_full_text_section_has_whole_chunk_for_top_3_only(tmp_path):
 def test_no_full_text_section_when_search_errors(tmp_path):
     text, _, _ = pack(tmp_path, hits={"error": "search_failed"})
     assert "Full text" not in text
+
+
+def test_title_words_drop_stopwords_short_words_and_duplicates():
+    assert title_words("Pod stuck in Pending with the scheduler, scheduler FAILED!") == [
+        "stuck", "pending", "scheduler", "failed"]  # "pod"/"in"/"the" are short; "with" is a stopword
+    assert title_words("a an of to") == []
+
+
+def test_evidence_lines_need_two_distinct_words_and_cap_at_five():
+    words = ["pending", "scheduler"]
+    text = "\n".join(["pending only", "pending pending pending", "scheduler and pending together",
+                      "  Scheduler: PENDING  "] + [f"pending scheduler {i}" for i in range(10)])
+    got = evidence_lines(text, words)
+    assert got[:2] == ["scheduler and pending together", "Scheduler: PENDING"] and len(got) == 5
+    assert evidence_lines("pending only\nnothing", words) == []
+    assert evidence_lines("pendingly schedulers", words) == []  # whole words only
+
+
+def test_evidence_section_lists_words_hit_numbers_and_no_match_message(tmp_path):
+    hits = {"passages": [passage(0, "intro\nthe pod stays pending until the scheduler runs\nend"),
+                         passage(1, "nothing relevant here")] + [passage(i, "x") for i in range(2, 7)],
+            "cost_usd": 0, "latency_ms": 0, "cache_hit": False}
+    thread = {**THREAD, "title": "Pod pending, scheduler never runs"}
+    text, _, _ = pack(tmp_path, thread=thread, hits=hits)
+    ev = text.split("## Evidence lines")[1]
+    assert text.index("## Evidence lines") > text.index("## Full text of the top 3 chunks")
+    assert "Title words used: pending, scheduler, never, runs" in ev
+    assert "1. `docs/p0`" in ev and "- the pod stays pending until the scheduler runs" in ev
+    assert "2. `docs/p1`\n   - no matching lines" in ev
+    assert "6. " not in ev and ev.count("no matching lines") == 4  # hits 2-5; only the top 5 get a block
+
+
+def test_no_evidence_section_on_errors(tmp_path):
+    assert "Evidence lines" not in pack(tmp_path, hits={"error": "search_failed"})[0]
+    assert "Evidence lines" not in pack(tmp_path, thread={"error": "not_found"})[0]
