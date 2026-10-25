@@ -94,6 +94,21 @@ Verified (RAN):
 - Agent loop, baseline, ledger and eval harness: 215 unit tests pass, all on fakes and synthetic fixtures.
 - The `anthropic` package is installed and pinned (2.3.0); the adapter constructs a client offline.
 
+Candidate pulls (25 Oct, script counts from `scripts.pull_candidates`, real GitHub API, read-only token). "Substantive" means body >= 200 chars and at least one human comment by someone else. It does NOT mean the docs answer the issue; that is only known after labelling.
+
+| Pull | Pulled | Body >= 200 | Human comment by someone else | Maintainer reply | Substantive | Median body chars |
+|---|---|---|---|---|---|---|
+| kind/support, limit 100 | 100 | 96 | 100 | 77 | 96 | 1738 |
+| kind/support, limit 250 | 250 | 244 | 250 | 205 | 244 | 1950 |
+| kind/bug + kind/support, limit 60 | 60 | 60 | 60 | 55 | 60 | 3289 |
+| kind/bug, limit 40 | 40 | 40 | 35 | 10 | 35 | 3048 |
+| kind/feature, limit 40 | 40 | 40 | 38 | 21 | 38 | 2798 |
+
+- The pulls overlap, so the rows must not be added together. Every kind/bug + kind/support issue also carries kind/support. The 250-issue support pull is newest-first and very likely contains the first 100.
+- All samples are newest-first. The docs index is pinned at kubernetes/website 6c42e266 (its commit date has not been checked), so very recent issues may refer to docs the index does not have.
+- Threads with no maintainer reply are never truncated by the leakage rule: 45 of 250 in the support pull (18%), 30 of 40 in kind/bug and 19 of 40 in kind/feature. They need a hand check for pasted fixes before use as answerable cases.
+- Only the script's filter has been applied: 244 of 250 support issues passed it. No issue has been read, selected or labelled.
+
 Not verified:
 - Any real model call: `AnthropicLLM.complete`, the system prompts, the `final_answer` tool format, and the model ID `claude-haiku-5-5` are untested. Prices are owner-confirmed 25 Oct 2026 from platform.claude.com/docs/en/about-claude/pricing (claude-haiku-5-5: input 0.10 / output 0.50 per MTok up to 100,000 prompt tokens, 0.50 / 2.50 above, plus cache rates; claude-haiku-4-5-20251001: 1 / 5, flat). Prompt size = input + cache read + cache write tokens; above 100,000 all five rates switch. Caps are owner-set: $0.02 per run, $1.00 per day. The prices and tier rule are exercised by unit tests only, not by any real response.
 - `MAX_PLAUSIBLE_TOKENS` (10**7) and `MAX_TOOL_CALLS` (8) are chosen, not measured.
