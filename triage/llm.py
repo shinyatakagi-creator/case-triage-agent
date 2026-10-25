@@ -57,6 +57,8 @@ LONG_PROMPT_TOKENS = 100_000
 # all five rates switch to the long_* values, output included.
 PRICES_USD_PER_MTOK: dict[str, ModelPrice] = {
     "claude-haiku-5-5": ModelPrice(0.10, 0.50, 0.125, 0.20, 0.01, 0.50, 2.50, 0.625, 1.00, 0.05),
+    # no price tiers: the long_* rates equal the short ones
+    "claude-sonnet-5-5": ModelPrice(2.0, 10.0, 2.50, 4.00, 0.20, 2.0, 10.0, 2.50, 4.00, 0.20),
     "claude-haiku-4-5-20251001": ModelPrice(1.0, 5.0, 1.25, 2.00, 0.10, 1.0, 5.0, 1.25, 2.00, 0.10),
 }
 
@@ -105,6 +107,10 @@ class AnthropicLLM:
         # api_key is passed explicitly so the SDK never falls back to ANTHROPIC_API_KEY;
         # base_url is fixed for the same reason (ANTHROPIC_BASE_URL could send the key elsewhere).
         self._client = anthropic.Anthropic(api_key=key, base_url=API_BASE_URL, max_retries=0)
+
+    def model_available(self) -> bool:
+        """Whether this key can see self.model (a models-list call; free, but it does touch the network)."""
+        return any(m.id == self.model for m in self._client.models.list(limit=1000))
 
     def complete(self, system: str, messages: list[dict], tools: list[dict]) -> Turn:
         r = self._client.messages.create(
