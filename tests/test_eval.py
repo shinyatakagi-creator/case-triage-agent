@@ -239,7 +239,7 @@ def test_one_case_gap_is_no_clear_difference(ev):
     c = compare(a, b, cs)["category"]
     assert (c["agent_only"], c["baseline_only"], c["ties"]) == (1, 0, 39)
     v = verdict(c, "category")
-    assert "no clear difference" in v and "only 1 of 40 cases differ" in v.lower()
+    assert "no clear difference" in v and "1 of 40 cases differ" in v
 
 
 def test_three_of_three_is_not_clear(ev):
@@ -309,3 +309,68 @@ def test_search_stats_missing_cache_hit_is_unknown_not_uncached(ev):
 def test_search_stats_empty():
     s = search_stats({})
     assert s["calls"] == 0 and s["cost_usd_mean"] is None
+
+
+# --- review round 2 --------------------------------------------------------
+
+@pytest.mark.parametrize("steps,cost", [
+    (2, "0.1"), (2, float("nan")), (2, float("inf")), (2, -0.5), (2, True),
+    (True, 0.1), (-1, 0.1), (2.0, 0.1), ("2", 0.1),
+])
+def test_bad_steps_or_cost_become_error_result(eval_cases, ev, steps, cost):
+    t = ev.agent_table()
+    n = ev.note("answered", "A", ["fake/doc-one"], 2, 0.01)
+    n["steps"], n["cost_usd"] = steps, cost
+    t["fake-1"] = (n, [ev.sr(["fake/doc-one"])])
+    run = run_eval(eval_cases, ev.runner(t), "agent", "es", match="any")
+    r = ev.by_id(run.results)["fake-1"]
+    assert r["outcome"] == "error" and r["failed"] and r["category"] is None
+    assert r["cost_usd"] == 0.0 and r["steps"] == 0
+    assert "ValueError" in run.errors["fake-1"]
+    summarise(run.results, eval_cases)  # must not break
+
+
+def test_contract_problem_messages_recorded(eval_cases, ev):
+    t = ev.agent_table()
+    t["fake-1"] = (ev.note("answered", "A", ["fake/ghost"], 2, 0.01), [ev.sr(["fake/doc-one"])])
+    run = run_eval(eval_cases, ev.runner(t), "agent", "es", match="any")
+    assert "fake/ghost" in run.errors["fake-1"] and run.errors["fake-1"].startswith("contract:")
+    assert "fake-2" not in run.errors
+
+
+def test_verdict_checks_disagree_sign_significant_ci_includes_zero():
+    p = {"n": 10, "agent_only": 6, "baseline_only": 0, "ties": 4, "ci": (-0.1, 0.5),
+         "sign_p": sign_test_p(6, 0)}  # 2/64 = 0.03125
+    v = verdict(p, "x")
+    assert "no clear difference" in v and "disagree" in v and "includes zero" in v
+    assert "p=0.031" in v and "within noise" not in v
+
+
+def test_verdict_checks_disagree_ci_excludes_zero_sign_not_significant():
+    p = {"n": 3, "agent_only": 3, "baseline_only": 0, "ties": 0, "ci": (1.0, 1.0),
+         "sign_p": sign_test_p(3, 0)}
+    v = verdict(p, "x")
+    assert "disagree" in v and "excludes zero" in v and "p=0.250" in v and "not below" in v
+
+
+def test_verdict_wording_all_cases_differ(ev):
+    cs, a, b = ev.synth(3, {0, 1, 2}, set())
+    v = verdict(compare(a, b, cs)["category"], "c")
+    assert "Only" not in v and "disagree" in v
+
+
+def test_search_stats_rejects_bad_values(ev):
+    good = ev.sr(["x"], cost=0.002, lat=100.0)
+    bads = [ev.sr(["x"], cost=float("nan")), ev.sr(["x"], lat=float("inf")), ev.sr(["x"], cost=-1.0),
+            ev.sr(["x"], lat=-5.0), ev.sr(["x"], cost=True)]
+    s = search_stats({"a": [good] + bads})
+    assert (s["calls"], s["uncached_calls"], s["unknown_cache_status"]) == (6, 1, 5)
+    assert s["cost_usd_total"] == pytest.approx(0.002)
+
+
+def test_compare_rejects_unknown_ids_and_missing_answerable(ev):
+    cs, a, b = ev.synth(4, {0}, {1})
+    with pytest.raises(ValueError, match="not in cases"):
+        compare(a, b, cs[:3])
+    with pytest.raises(ValueError, match="missing from both"):
+        compare(a[:3], b[:3], cs)

@@ -3,6 +3,7 @@
 Reads case files from whatever path it is given. It never writes anywhere.
 """
 import json
+import math
 from typing import Callable, Literal, NamedTuple
 
 from triage.contracts import (
@@ -77,7 +78,7 @@ def doc_correct(valid_cited: list[str], gold: list[str], match: Match) -> bool:
 class EvalRun(NamedTuple):
     results: list[EvalResult]
     search_results_by_case: dict[str, list[SearchResult]]
-    errors: dict[str, str]  # case_id -> exception message; kept out of EvalResult (frozen)
+    errors: dict[str, str]  # case_id -> exception message or contract problems; kept out of EvalResult (frozen)
 
 
 def _failed_result(case: EvalCase, system: str, backend: str) -> EvalResult:
@@ -86,8 +87,23 @@ def _failed_result(case: EvalCase, system: str, backend: str) -> EvalResult:
             "correct_doc_cited": False, "steps": 0, "cost_usd": 0.0, "failed": True}
 
 
+def _is_real(x, *, integer: bool) -> bool:
+    """Finite, non-negative int/float; bool is rejected (it is an int subclass)."""
+    if isinstance(x, bool):
+        return False
+    if integer:
+        return isinstance(x, int) and x >= 0
+    return isinstance(x, (int, float)) and math.isfinite(x) and x >= 0
+
+
 def _score(case: EvalCase, note: TriageNote, sr: list[SearchResult], system: str,
-           backend: str, match: Match) -> EvalResult:
+           backend: str, match: Match) -> tuple[EvalResult, list[str]]:
+    """Returns (result, contract problems). Raises ValueError on a note with bad steps/cost,
+    so summarise never meets a string or NaN."""
+    if not _is_real(note["steps"], integer=True):
+        raise ValueError(f"steps must be an int >= 0, got {note['steps']!r}")
+    if not _is_real(note["cost_usd"], integer=False):
+        raise ValueError(f"cost_usd must be a finite number >= 0, got {note['cost_usd']!r}")
     cited = _cited(note)  # cited_docs is what the note CITED, valid or not
     returned = {p["source"] for r in sr for p in r["passages"]}
     problems = contract_problems(note, sr)
@@ -100,7 +116,7 @@ def _score(case: EvalCase, note: TriageNote, sr: list[SearchResult], system: str
         "correct_doc_cited": doc_correct(valid, case["gold_docs"], match),
         "steps": note["steps"], "cost_usd": note["cost_usd"],
         "failed": note["outcome"] in ("error", "step_cap") or bool(problems),
-    }
+    }, problems
 
 
 def run_eval(cases: list[EvalCase], runner: Runner, system: Literal["agent", "baseline"],
@@ -121,8 +137,11 @@ def run_eval(cases: list[EvalCase], runner: Runner, system: Literal["agent", "ba
     for case in cases:
         try:
             note, sr = runner(case)
-            results.append(_score(case, note, sr, system, backend, match))
+            result, problems = _score(case, note, sr, system, backend, match)
+            results.append(result)
             searches[case["id"]] = sr
+            if problems:  # keep the reason a contract failure failed
+                errors[case["id"]] = "contract: " + "; ".join(problems)
         except Exception as e:  # noqa: BLE001 - one bad case must not end the eval
             results.append(_failed_result(case, system, backend))
             searches[case["id"]] = []

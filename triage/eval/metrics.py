@@ -39,6 +39,11 @@ def _num(xs: list[float]) -> dict:
 
 
 def summarise(results: list[EvalResult], cases: list[EvalCase]) -> dict:
+    """Rates (category, doc, can't tell, failure) use ALL cases, failed runs included: a failed
+    run is a miss, and dropping it would flatter the system. Only the cost and steps
+    averages exclude failed runs, because a crashed or capped run has no meaningful cost
+    or step count; they are reported separately.
+    """
     by_id = {c["id"]: c for c in cases}
     rows = [(r, by_id[r["case_id"]]) for r in results]  # KeyError on unknown id is deliberate
     ans = [(r, c) for r, c in rows if c["answerable"]]
@@ -95,7 +100,13 @@ def compare(agent_results: list[EvalResult], baseline_results: list[EvalResult],
             raise ValueError(f"duplicate case_id in {name} results")
     if {r["case_id"] for r in agent_results} != {r["case_id"] for r in baseline_results}:
         raise ValueError("agent and baseline results cover different case ids")
+    case_ids = {c["id"] for c in cases}
+    result_ids = {r["case_id"] for r in agent_results}
+    if result_ids - case_ids:
+        raise ValueError(f"result case ids not in cases: {sorted(result_ids - case_ids)}")
     answerable = {c["id"] for c in cases if c["answerable"]}
+    if answerable - result_ids:
+        raise ValueError(f"answerable cases missing from both result lists: {sorted(answerable - result_ids)}")
 
     def flags(rs, key):
         return {r["case_id"]: r[key] for r in rs if r["case_id"] in answerable}
@@ -110,32 +121,41 @@ def compare(agent_results: list[EvalResult], baseline_results: list[EvalResult],
 def verdict(paired: dict, label: str) -> str:
     """Clear only if the bootstrap CI excludes zero AND the sign test has p < ALPHA."""
     ci, w, l, n, p = paired["ci"], paired["agent_only"], paired["baseline_only"], paired["n"], paired["sign_p"]
+    d = w + l
     counts = f"agent-only {w}, baseline-only {l}, ties {paired['ties']} of {n}"
-    if ci is not None and w + l > 0 and p < ALPHA:
-        detail = f"{counts}; 95% CI of mean diff {ci[0]:+.3f} to {ci[1]:+.3f}; sign test p={p:.4f}"
-        if ci[0] > 0:
-            return f"{label}: agent clearly better ({detail})."
-        if ci[1] < 0:
-            return f"{label}: baseline clearly better ({detail})."
-    if w + l == 0:
-        why = f"no case out of {n} differs"
-    else:
-        why = (f"only {w + l} of {n} cases differ ({w} vs {l}); exact sign test p={p:.3f}"
-               + ("" if ci is None else f", bootstrap CI {ci[0]:+.3f} to {ci[1]:+.3f}"))
-    return f"{label}: no clear difference ({counts}). {why.capitalize()}, which is within noise; do not claim a win."
+    if d == 0 or ci is None:
+        return f"{label}: no clear difference ({counts}). No case out of {n} differs; do not claim a win."
+    ci_txt = f"bootstrap CI {ci[0]:+.3f} to {ci[1]:+.3f}"
+    ci_excl = ci[0] > 0 or ci[1] < 0
+    sig = p < ALPHA
+    if ci_excl and sig:
+        who = "agent" if ci[0] > 0 else "baseline"
+        return f"{label}: {who} clearly better ({counts}; {ci_txt}; sign test p={p:.4f})."
+    if ci_excl != sig:
+        return (f"{label}: no clear difference ({counts}). The two checks disagree: "
+                f"the bootstrap CI {'excludes' if ci_excl else 'includes'} zero ({ci_txt[len('bootstrap CI '):]}) but the "
+                f"exact sign test p={p:.3f} is {'below' if sig else 'not below'} {ALPHA}. "
+                f"Both must agree before calling it clear; do not claim a win.")
+    return (f"{label}: no clear difference ({counts}). {d} of {n} cases differ ({w} vs {l}); "
+            f"exact sign test p={p:.3f}, {ci_txt}, which is within noise; do not claim a win.")
+
+
+def _num_ok(x) -> bool:
+    return (isinstance(x, (int, float)) and not isinstance(x, bool)
+            and math.isfinite(x) and x >= 0)
 
 
 def _known(r) -> bool:
     return (isinstance(r, dict) and isinstance(r.get("cache_hit"), bool)
-            and isinstance(r.get("cost_usd"), (int, float))
-            and isinstance(r.get("latency_ms"), (int, float)))
+            and _num_ok(r.get("cost_usd")) and _num_ok(r.get("latency_ms")))
 
 
 def search_stats(search_results_by_case: dict[str, list[SearchResult]]) -> dict:
     """Cost and latency come from uncached calls only (cached calls report cost 0).
 
-    A result without a usable cache_hit (or cost/latency) is malformed: counted as
-    unknown_cache_status and excluded from every other number, never assumed uncached.
+    A result without a bool cache_hit, or with cost/latency that is missing, bool, NaN, inf
+    or negative, is malformed: counted in ONE counter, unknown_cache_status (it covers bad
+    values too, not a separate unknown_value) and excluded from every other number, never assumed uncached.
     """
     calls = [r for rs in search_results_by_case.values() for r in rs]
     good = [r for r in calls if _known(r)]
