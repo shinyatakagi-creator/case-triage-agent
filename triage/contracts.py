@@ -20,6 +20,9 @@ ERROR_KINDS = get_args(ErrorKind)
 OUTCOMES = get_args(Outcome)
 BACKENDS = get_args(Backend)
 
+# Owner-defined (docs/scope.md "Category set"), checked in this order, first match wins.
+CATEGORIES = ("version_change", "config_error", "by_design", "howto")
+
 # --- tool errors -----------------------------------------------------------
 
 

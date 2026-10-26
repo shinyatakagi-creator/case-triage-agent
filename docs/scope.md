@@ -144,3 +144,14 @@ Status: in progress. The eval set (25 answerable / 15 not, unchanged) is not yet
 - About 13 retrieval misses (owner's count, not derivable from the files): the docs answer the issue but search did not return the page. These are labelled so the miss counts against retrieval, not as "unanswerable".
 - Yes rate is about 15% (26/173).
 - Unsure (62) is mostly vague failures with no confirmed cause (owner's reading).
+
+## Category set
+
+Defined by the owner. Four categories, checked in this order; the first that matches wins. The names are `CATEGORIES` in `triage/contracts.py`.
+
+1. `version_change` (Version or feature change): the behaviour comes from a deprecation, removal, version requirement, or a feature being alpha or behind a gate.
+2. `config_error` (Configuration error): the user's own config, command or host setup is wrong, and fixing it solves the problem.
+3. `by_design` (Works as designed): Kubernetes behaves as intended; the user misread what it should do.
+4. `howto` (How-to or diagnosis): the user asks how to do something or how to find a cause, and the docs give the steps.
+
+Unanswerable cases get category `n/a`. Category accuracy is scored on answerable cases only. The owner's per-issue assignment is in `data/eval_staging/categories.json` (staging, not committed; 25 issues: 5 version_change, 3 config_error, 9 by_design, 8 howto).
