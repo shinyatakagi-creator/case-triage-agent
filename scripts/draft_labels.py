@@ -243,6 +243,7 @@ def main(argv: list[str]) -> int:
     ap.add_argument("numbers", nargs="*", type=int)
     ap.add_argument("--from", dest="from_file")
     ap.add_argument("--limit", type=int, default=10)
+    ap.add_argument("--out", default=str(LABELS_PATH), help="drafts file (never under data/eval/); default data/drafts/labels.jsonl")
     ap.add_argument("--max-usd", type=float, default=3.00, help="cap for this run")
     ap.add_argument("--max-day-usd", type=float, default=3.00, help="cap for all draft runs in one day")
     args = ap.parse_args(argv)
@@ -257,7 +258,7 @@ def main(argv: list[str]) -> int:
               file=sys.stderr)
         return 2
     ledger = Ledger(per_run_cap=args.max_usd, per_day_cap=args.max_day_usd, path=guard_out_path(SPEND_PATH))
-    print_summary(run(numbers, llm, ledger))
+    print_summary(run(numbers, llm, ledger, out_path=args.out))
     return 0
 
 
