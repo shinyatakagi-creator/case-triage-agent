@@ -189,4 +189,4 @@ Source: `python -m scripts.run_eval --run-dir data/results/20261026-153314 --rep
 - Baseline answered two of the same cases: 129846 (2 of 3) and 135490 (3 of 3).
 - The one error in 240 runs is the agent on 135490, repeat 2.
 
-**Limits.** 25 answerable and 15 unanswerable cases, one model (claude-haiku-5-5), the es backend only; the in-process backend has not been run. The cause of each answered-but-unanswerable case is the owner's reading, not an automated check.
+**Limits.** 25 answerable and 15 unanswerable cases, one model (claude-haiku-5-5), the es backend only; the in-process backend has not been run. No prompt was changed after seeing eval results; all prompt changes came from the 5 dev issues before the eval run. The category definitions were drafted by the labeller while labelling the 25 answerable eval issues, and the same definitions were used for both labels and prompts. The cause of each answered-but-unanswerable case is the owner's reading, not an automated check.
