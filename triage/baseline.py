@@ -10,16 +10,20 @@ Failure policy, stated exactly:
 import json
 
 from triage.agent import (
-    FINAL_ANSWER, RunResult, ToolRunner, Tools, ask, build_result, final_answer_spec, is_error,
+    ANSWER_RULES, CATEGORY_BLOCK, FINAL_ANSWER, RunResult, ToolRunner, Tools, ask, build_result, final_answer_spec, is_error,
 )
 from triage.llm import LLM, Ledger
 
 QUERY_BODY_CHARS = 500  # first N chars of the body go into the query
 
-SYSTEM_PROMPT = """You triage one public Kubernetes GitHub issue in a single step.
+SYSTEM_PROMPT = f"""You triage one public Kubernetes GitHub issue in a single step.
 You are given the issue thread and one set of documentation search results. Call final_answer
 exactly once. Cite only sources present in the search results. If they do not support an answer,
-use outcome "cant_tell". Do not guess."""
+use outcome "cant_tell". Do not guess.
+
+{CATEGORY_BLOCK}
+
+{ANSWER_RULES}"""
 
 
 def build_query(thread: dict) -> str:

@@ -35,14 +35,28 @@ FATAL_KINDS = {"rate_limited", "bad_url", "not_found", "not_an_issue"}
 FAIL_KIND = {"search_docs": "search_failed", "get_issue_thread": "github_failed",
              "extract_error_signals": "search_failed"}
 
-SYSTEM_PROMPT = """You triage one public Kubernetes GitHub issue using three tools.
+# Shared verbatim by the agent and the baseline prompts.
+CATEGORY_BLOCK = """Categories (check in this order; the first that fits wins):
+1. version_change: the behaviour comes from a deprecation, removal, version requirement, or a feature being alpha or behind a feature gate.
+2. config_error: the user's own configuration, command or host setup is wrong, and fixing it solves the problem.
+3. by_design: Kubernetes is behaving as intended and the user misread what it should do.
+4. howto: the user asks how to do something or how to find a cause, and the docs give the steps."""
+
+ANSWER_RULES = """For answered: category is required; likely_cause is one or two sentences naming the cause; citations are 1 to 3 source ids from search_docs results that support it; next_step is one concrete action.
+For cant_tell: omit category."""
+
+SYSTEM_PROMPT = f"""You triage one public Kubernetes GitHub issue using three tools.
 get_issue_thread fetches the issue under triage (you cannot choose another). search_docs searches
 the Kubernetes documentation. extract_error_signals parses error text.
 Work in few steps; you have a hard limit on model turns and on tool calls. If a search returns
 nothing, try a differently worded query. Never retry a tool that returned an error.
 Finish by calling final_answer. Cite only sources returned by search_docs in this conversation.
 If the documentation does not support an answer, call final_answer with outcome "cant_tell";
-that is a valid, expected outcome. Do not guess."""
+that is a valid, expected outcome. Do not guess.
+
+{CATEGORY_BLOCK}
+
+{ANSWER_RULES}"""
 
 
 class Tools(Protocol):
@@ -88,10 +102,12 @@ def final_answer_spec(categories: list[str] | None) -> dict:
 
 def tool_specs(categories: list[str] | None) -> list[dict]:
     return [
-        {"name": "search_docs", "description": "Search the Kubernetes docs.",
+        {"name": "search_docs", "description": ("Search the Kubernetes documentation (concepts, tasks, reference). Returns passages, "
+                         "each with a source id you can cite. Use Kubernetes terminology in queries."),
          "input_schema": {"type": "object", "properties": {"query": {"type": "string"}, "k": {"type": "integer"}},
                           "required": ["query"]}},
-        {"name": "get_issue_thread", "description": "Fetch the issue under triage.",
+        {"name": "get_issue_thread", "description": ("Fetch the issue under triage: the issue body and the author's own follow-up comments only; "
+                         "replies from others are not included."),
          "input_schema": {"type": "object", "properties": {}}},
         {"name": "extract_error_signals", "description": "Parse versions and errors out of text.",
          "input_schema": {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}},
@@ -282,6 +298,18 @@ def _text(x) -> str | None:
     return x.strip() if isinstance(x, str) and x.strip() else None
 
 
+def category_problems(outcome: Outcome, category, categories: list[str] | None) -> list[str]:
+    """answered needs a category from the set; cant_tell must have none. Skipped when no set was given."""
+    if not categories:
+        return []
+    if outcome == "answered" and category not in categories:
+        shown = category[:40] if isinstance(category, str) else type(category).__name__  # never str() model junk
+        return [f"outcome 'answered' with a missing or unknown category: {shown!r}"]
+    if outcome == "cant_tell" and category is not None:
+        return ["outcome 'cant_tell' with a category (must be omitted)"]
+    return []
+
+
 def build_result(issue_url: str, outcome: Outcome, runner: ToolRunner, steps: int, llm_usd: float,
                  final: dict | None = None, categories: list[str] | None = None,
                  reason: str | None = None) -> RunResult:
@@ -311,7 +339,7 @@ def build_result(issue_url: str, outcome: Outcome, runner: ToolRunner, steps: in
     if runner.cost_overflow:
         note["outcome"] = "error"
         reason = "search costs overflowed the float range; note cost_usd is understated"
-    problems = contract_problems(note, runner.search_results)
+    problems = contract_problems(note, runner.search_results) + category_problems(outcome, category, categories)
     if problems and note["outcome"] != "error":
         # e.g. "answered" whose citations were all invented: a failure, not a quiet downgrade to cant_tell
         reason = "; ".join(problems) + (f"; dropped citations: {dropped}" if dropped else "")

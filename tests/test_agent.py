@@ -25,12 +25,12 @@ def search_turn(q="q", id="s"):
 
 
 def test_happy_path_valid_citation(ledger):
-    llm = FakeLLM([turn(use("get_issue_thread")), search_turn("widgets"), final()])
+    llm = FakeLLM([turn(use("get_issue_thread")), search_turn("widgets"), final(category="scheduling")])
     res = run_agent(URL, FakeTools(), llm, ledger, categories=["scheduling", "other"])
     n = res["note"]
     assert n["outcome"] == "answered" and n["steps"] == 3
     assert [c["source"] for c in n["citations"]] == [SRC]
-    assert n["category"] is None  # model gave none
+    assert n["category"] == "scheduling"
     assert contract_problems(n, res["search_results"]) == []
     assert n["cost_usd"] == pytest.approx(0.0001 + 3 * TURN_USD)
     assert ledger.run_usd == pytest.approx(n["cost_usd"])  # model + search both counted
@@ -61,10 +61,24 @@ def test_final_answer_wins_over_other_blocks_in_same_turn(ledger):
     assert res["note"]["outcome"] == "cant_tell" and t.calls == []
 
 
-def test_category_only_from_provided_list(ledger):
-    for cats, expect in ((["scheduling"], "scheduling"), (["other"], None), (None, None)):
-        llm = FakeLLM([final("cant_tell", citations=[], category="scheduling")])
-        assert run_agent(URL, FakeTools(), llm, ledger, cats)["note"]["category"] == expect
+@pytest.mark.parametrize("outcome,cites,extra,expect", [
+    ("answered", (SRC,), {"category": "scheduling"}, "answered"),
+    ("answered", (SRC,), {}, "error"),                            # category missing
+    ("answered", (SRC,), {"category": "nonsense"}, "error"),      # not in the set
+    ("cant_tell", (), {"category": "scheduling"}, "error"),       # extra category
+    ("cant_tell", (), {}, "cant_tell"),
+])
+def test_category_rule(ledger, outcome, cites, extra, expect):
+    llm = FakeLLM([search_turn(), final(outcome, citations=cites, **extra)])
+    res = run_agent(URL, FakeTools(), llm, ledger, ["scheduling"])
+    assert res["note"]["outcome"] == expect
+    if expect == "error":
+        assert "category" in res["reason"] and res["note"]["category"] is None
+
+
+def test_no_category_rule_without_a_set(ledger):
+    llm = FakeLLM([search_turn(), final()])
+    assert run_agent(URL, FakeTools(), llm, ledger)["note"]["outcome"] == "answered"
 
 
 def test_contract_problems_flags_invented_citation():
@@ -318,7 +332,7 @@ def test_nested_or_non_string_citations_do_not_crash(ledger):
     llm = FakeLLM([search_turn(), turn(use("final_answer", outcome="answered", citations=[deep(), 5, SRC],
                                           likely_cause=deep(), category=deep()))])
     res = run_agent(URL, FakeTools(), llm, ledger, categories=["a"])
-    assert [c["source"] for c in res["note"]["citations"]] == [SRC]
+    assert res["note"]["outcome"] == "error"  # deep category on "answered" is a contract problem, not a crash
     assert all(isinstance(d, InvalidCitation) for d in res["dropped_citations"]) and len(res["dropped_citations"]) == 2 and res["note"]["category"] is None
 
 

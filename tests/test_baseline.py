@@ -15,7 +15,7 @@ def ledger(tmp_path):
 
 
 def test_one_search_one_model_call(ledger):
-    t, llm = FakeTools(), FakeLLM([final()])
+    t, llm = FakeTools(), FakeLLM([final(category="a")])
     res = run_baseline(URL, t, llm, ledger, categories=["a"])
     assert [n for n, _ in t.calls] == ["get_issue_thread", "search_docs"]
     assert len(llm.seen) == 1
@@ -88,7 +88,7 @@ def test_baseline_cap_stops_before_call(tmp_path):
 def test_baseline_failed_ledger_spends_nothing(tmp_path):
     bad = tmp_path / "s.json"
     bad.write_text("garbage")
-    t, llm = FakeTools(), FakeLLM([final()])
+    t, llm = FakeTools(), FakeLLM([final(category="a")])
     res = run_baseline(URL, t, llm, Ledger(path=bad))
     assert res["note"]["outcome"] == "error" and t.calls == [] and llm.seen == []
     assert res["note"]["tool_calls"] == [] and res["note"]["cost_usd"] == 0.0
