@@ -427,3 +427,19 @@ def test_invalid_cache_field_is_error_but_known_cost_counted(ledger, field, bad)
     res = run_agent(URL, FakeTools(), FakeLLM([t]), ledger)
     assert res["note"]["outcome"] == "error" and "token counts" in res["reason"]
     assert res["note"]["cost_usd"] > 0 and ledger.load_error is None
+
+
+def test_chunk_id_citation_is_mapped_to_its_source(ledger):
+    chunk = fx("search.json")["passages"][0]["chunk_id"]
+    for cited in ([chunk], [chunk, SRC]):  # second case: mapped id duplicates a real source, kept once
+        llm = FakeLLM([search_turn(), final(citations=cited, category="scheduling")])
+        res = run_agent(URL, FakeTools(), llm, ledger, ["scheduling"])
+        assert res["note"]["outcome"] == "answered"
+        assert [c["source"] for c in res["note"]["citations"]] == [SRC]
+        assert f"{chunk} -> {SRC}" in res["reason"] and res["dropped_citations"] == []
+
+
+def test_unreturned_citation_is_still_dropped(ledger):
+    llm = FakeLLM([search_turn(), final(citations=["not-returned-id"], category="scheduling")])
+    res = run_agent(URL, FakeTools(), llm, ledger, ["scheduling"])
+    assert res["note"]["outcome"] == "error" and res["dropped_citations"] == ["not-returned-id"]

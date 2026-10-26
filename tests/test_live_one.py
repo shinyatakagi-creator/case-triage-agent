@@ -49,3 +49,10 @@ def test_adapter_keywords_exist_in_the_installed_sdk(monkeypatch):
         llm.complete("s", [], [])
     params = inspect.signature(anthropic.Anthropic(api_key="x").messages.create).parameters
     assert seen and set(seen) <= set(params), set(seen) - set(params)
+
+
+def test_citation_text_says_source_not_chunk_id():
+    from triage.agent import ANSWER_RULES, final_answer_spec
+    assert "not chunk_id" in ANSWER_RULES
+    assert "not chunk_id" in final_answer_spec(["a"])["input_schema"]["properties"]["citations"]["description"]
+    assert ANSWER_RULES in SYSTEM_PROMPT and ANSWER_RULES in baseline.SYSTEM_PROMPT

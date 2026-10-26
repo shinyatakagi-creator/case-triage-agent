@@ -92,3 +92,9 @@ def test_baseline_failed_ledger_spends_nothing(tmp_path):
     res = run_baseline(URL, t, llm, Ledger(path=bad))
     assert res["note"]["outcome"] == "error" and t.calls == [] and llm.seen == []
     assert res["note"]["tool_calls"] == [] and res["note"]["cost_usd"] == 0.0
+
+
+def test_baseline_maps_chunk_id_citation(ledger):
+    res = run_baseline(URL, FakeTools(), FakeLLM([final(citations=["c1"], category="a")]), ledger, categories=["a"])
+    assert res["note"]["outcome"] == "answered" and [c["source"] for c in res["note"]["citations"]] == [SRC]
+    assert "c1 -> " in res["reason"]

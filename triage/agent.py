@@ -42,7 +42,7 @@ CATEGORY_BLOCK = """Categories (check in this order; the first that fits wins):
 3. by_design: Kubernetes is behaving as intended and the user misread what it should do.
 4. howto: the user asks how to do something or how to find a cause, and the docs give the steps."""
 
-ANSWER_RULES = """For answered: category is required; likely_cause is one or two sentences naming the cause; citations are 1 to 3 source ids from search_docs results that support it; next_step is one concrete action.
+ANSWER_RULES = """For answered: category is required; likely_cause is one or two sentences naming the cause; citations are 1 to 3 source ids from search_docs results that support it (cite the passage's source field, for example tasks/debug/debug-cluster/audit, not chunk_id); next_step is one concrete action.
 For cant_tell: omit category."""
 
 SYSTEM_PROMPT = f"""You triage one public Kubernetes GitHub issue using three tools.
@@ -92,7 +92,7 @@ def final_answer_spec(categories: list[str] | None) -> dict:
                 "category": category,
                 "likely_cause": {"type": "string"},
                 "citations": {"type": "array", "items": {"type": "string"},
-                              "description": "source ids returned by search_docs"},
+                              "description": "source ids returned by search_docs: the passage's source field (for example tasks/debug/debug-cluster/audit), not chunk_id"},
                 "next_step": {"type": "string"},
             },
             "required": ["outcome"],
@@ -318,6 +318,10 @@ def build_result(issue_url: str, outcome: Outcome, runner: ToolRunner, steps: in
     raw = final.get("citations") if isinstance(final.get("citations"), list) else []
     # Non-string citations are never str()'d (a nested object could blow the recursion limit).
     strs = list(dict.fromkeys(c for c in raw if isinstance(c, str)))
+    by_chunk = {p["chunk_id"]: p["source"] for r in runner.search_results for p in r["passages"]}
+    # A chunk_id the search returned is a slip for that passage's source: keep it, and say so.
+    mapped = {c: by_chunk[c] for c in strs if c not in returned and c in by_chunk}
+    strs = list(dict.fromkeys(mapped.get(c, c) for c in strs))
     valid = [c for c in strs if c in returned]
     dropped = [c for c in strs if c not in returned] + [
         InvalidCitation(type(c).__name__) for c in raw if not isinstance(c, str)]
@@ -338,6 +342,9 @@ def build_result(issue_url: str, outcome: Outcome, runner: ToolRunner, steps: in
     if runner.cost_overflow:
         note["outcome"] = "error"
         reason = "search costs overflowed the float range; note cost_usd is understated"
+    if mapped:
+        reason = "; ".join(filter(None, [reason, "citation mapped from chunk_id to source: " +
+                                         ", ".join(f"{k} -> {v}" for k, v in mapped.items())]))
     if outcome == "cant_tell" and category is not None and note["outcome"] == "cant_tell":
         reason = "; ".join(filter(None, [reason, "category dropped: cant_tell must omit it"]))
     problems = contract_problems(note, runner.search_results) + category_problems(outcome, category, categories)
