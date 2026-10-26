@@ -129,3 +129,18 @@ Facts only.
 - Docs index is pinned to kubernetes/website commit 6c42e266.
 - Baseline changed (supersedes the Eval section's "rag-hybrid answering in one shot"): single-shot with the same Haiku model: one `search_docs` call on the same truncated thread, then an answer in the TriageNote format. rag-hybrid `/ask` (Sonnet) is a separate second reference, not the baseline.
 - Order change: the in-process retrieval backend moves to evening 7 as in the timeline; agent loop and eval harness skeleton are built first.
+
+## Labelling
+
+Status: in progress. The eval set (25 answerable / 15 not, unchanged) is not yet chosen from these labels; categories are not yet defined (`category` is "TBD" in staging).
+
+**Method.** Claude Sonnet 5.5 drafts one label per issue (yes / no / unsure) from the thread as `get_issue_thread` returns it plus three merged searches. For "yes" it must give doc_ids and verbatim quotes; the quotes are checked mechanically against the retrieved chunks, and any failed check turns the label into "unsure". Every label is then reviewed by the owner with `scripts/review_labels.py` (y accept, n flip yes/no, u unsure; on an unsure draft y = yes, n = no; `--redo` replaces a decision and keeps the old one). A "yes" needs a doc_id from that issue's search results. Drafts live in `data/drafts/`; nothing here has been promoted to `data/eval/`.
+
+**Counts** (read from `data/drafts/reviewed.jsonl`, the owner's decisions, 173 records): 26 yes, 85 no, 62 unsure. Yes rate 26/173 = 15.0%. Draft actions in that file: 106 accepted, 3 flipped, 2 decided from unsure, 62 left unsure. The first 72 issues were pre-screened by title before drafting (owner's account; not recorded in the data files), so the yes rate is not a rate over all candidates.
+
+**Leakage-rule fix and redraft check.** The thread rule changed to: cut at the first comment by anyone but the issue author; bots ignored; `author_association` dropped. 13 reviewed issues were redrafted under the new rule (`data/drafts/labels_newrule.jsonl`). Compared with the owner's decisions: 10 of 13 agree (all 10 yes/yes). The 3 differences: owner yes vs redraft no (1), owner yes vs redraft unsure (1), owner unsure vs redraft no (1). The reviewed file has no `--redo` record, so the borderline case moving to unsure is not applied there.
+
+**Findings.**
+- About 13 retrieval misses (owner's count, not derivable from the files): the docs answer the issue but search did not return the page. These are labelled so the miss counts against retrieval, not as "unanswerable".
+- Yes rate is about 15% (26/173).
+- Unsure (62) is mostly vague failures with no confirmed cause (owner's reading).
