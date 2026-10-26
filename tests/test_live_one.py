@@ -56,3 +56,11 @@ def test_citation_text_says_source_not_chunk_id():
     assert "not chunk_id" in ANSWER_RULES
     assert "not chunk_id" in final_answer_spec(["a"])["input_schema"]["properties"]["citations"]["description"]
     assert ANSWER_RULES in SYSTEM_PROMPT and ANSWER_RULES in baseline.SYSTEM_PROMPT
+
+
+def test_baseline_system_runs_one_search_one_model_call(tmp_path, capsys):
+    tools = live_one.LoggingTools(FakeTools())
+    llm = FakeLLM([final(category="howto")])
+    res = live_one.run(URL, llm, Ledger(per_run_cap=1.0, per_day_cap=10.0, path=tmp_path / "s.json"), tools, "baseline")
+    assert res["note"]["steps"] == 1 and [c["tool"] for c in tools.log] == ["get_issue_thread", "search_docs"]
+    assert "search_docs: ok  query=" in capsys.readouterr().out

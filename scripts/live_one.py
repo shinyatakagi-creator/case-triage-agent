@@ -1,4 +1,4 @@
-"""Run the agent LIVE on one issue. PAID: run only on request.
+"""Run the agent (or, with --system baseline, the single-shot baseline) LIVE on one issue. PAID: run only on request.
 
 Usage (env loaded: TRIAGE_ANTHROPIC_API_KEY, GITHUB_TOKEN; rag-hybrid up):
     python -m scripts.live_one --issue https://github.com/kubernetes/kubernetes/issues/127264 --max-usd 0.02
@@ -12,6 +12,7 @@ import sys
 
 from triage import server
 from triage.agent import run_agent
+from triage.baseline import run_baseline
 from triage.contracts import CATEGORIES
 from triage.llm import AnthropicLLM, Ledger
 
@@ -53,8 +54,11 @@ def report(res: dict, tools: LoggingTools) -> None:
         print(f"dropped citations: {res['dropped_citations']}")
 
 
-def run(issue_url: str, llm, ledger, tools: LoggingTools) -> dict:
-    res = run_agent(issue_url, tools, llm, ledger, list(CATEGORIES))
+SYSTEMS = {"agent": run_agent, "baseline": run_baseline}
+
+
+def run(issue_url: str, llm, ledger, tools: LoggingTools, system: str = "agent") -> dict:
+    res = SYSTEMS[system](issue_url, tools, llm, ledger, list(CATEGORIES))
     report(res, tools)
     return res
 
@@ -62,6 +66,7 @@ def run(issue_url: str, llm, ledger, tools: LoggingTools) -> dict:
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--issue", required=True)
+    ap.add_argument("--system", choices=sorted(SYSTEMS), default="agent")
     ap.add_argument("--max-usd", type=float, default=0.02, help="cap for this run")
     args = ap.parse_args(argv)
     try:
@@ -73,7 +78,7 @@ def main(argv: list[str]) -> int:
         print(f"cannot start: {type(e).__name__}: {e if isinstance(e, RuntimeError) else 'models list call failed'}",
               file=sys.stderr)
         return 2
-    run(args.issue, llm, Ledger(per_run_cap=args.max_usd), LoggingTools())
+    run(args.issue, llm, Ledger(per_run_cap=args.max_usd), LoggingTools(), args.system)
     return 0
 
 

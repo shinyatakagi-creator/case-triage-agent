@@ -159,3 +159,7 @@ Unanswerable cases get category `n/a`. Category accuracy is scored on answerable
 ## Sampling (26 Oct)
 
 Sampling cannot be pinned with the installed anthropic SDK: `messages.create` has no `temperature` parameter (a live attempt failed on it before any request). So model output varies run to run. The eval runs each case 3 times per system (agent and baseline) and reports the mean and the range, with counts. The 3-run repeat is not implemented in the eval runner yet.
+
+## Correct doc cited (decided 26 Oct)
+
+"Correct doc cited" means at least one gold doc is among the cited sources, with citations de-duplicated by source (`match="any"` in the eval runner). Only citations that `search_docs` returned in the same run count. It is scored on answerable cases only.

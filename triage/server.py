@@ -17,6 +17,12 @@ from triage.thread import (
 
 RAG_API_URL = os.environ.get("RAG_API_URL", "http://127.0.0.1:8000")
 TIMEOUT = httpx.Timeout(15.0)
+MAX_QUERY_CHARS = 500  # rag-hybrid /search returns 422 above this, and for any control character (CR/LF)
+
+
+def clean_query(query: str) -> str:
+    """Whitespace collapsed (no control characters) and cut to what /search accepts."""
+    return " ".join(query.split())[:MAX_QUERY_CHARS]
 
 mcp = MCPServer("case-triage")
 
@@ -48,7 +54,7 @@ def search_docs(query: str, k: int = 5) -> dict:
     try:
         r = httpx.post(
             f"{RAG_API_URL}/search",
-            json={"query": query, "mode": "hybrid", "k": k},
+            json={"query": clean_query(query), "mode": "hybrid", "k": k},
             timeout=TIMEOUT,
         )
         r.raise_for_status()
