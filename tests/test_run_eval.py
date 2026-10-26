@@ -90,3 +90,39 @@ def test_reason_on_a_non_error_outcome_is_a_note_not_a_failure(tmp_path):
 def test_results_cannot_go_under_data_eval():
     with pytest.raises(ValueError):
         re_.guard_out_path("data/eval/runs.jsonl")
+
+
+TURN_USD = (100 * 0.10 + 50 * 0.50) / 1e6  # FakeLLM turns: 100 in, 50 out at the default model's price
+
+
+class NoAnswerLLM(OneShotLLM):
+    def complete(self, system, messages, tools):
+        self.calls += 1
+        return {"content": [{"type": "text", "text": "I am not sure."}], "input_tokens": 100, "output_tokens": 50}
+
+
+@pytest.mark.parametrize("system", ["agent", "baseline"])
+def test_error_run_records_what_it_spent(tmp_path, system):
+    ledger = Ledger(per_run_cap=1.0, per_day_cap=10.0, path=tmp_path / "s.json")
+    rec = re_.run_one(CASES[0], system, 1, NoAnswerLLM(), ledger, LoggingTools(FakeTools()))
+    assert rec["outcome"] == "error" and rec["failed"]
+    search = sum(x["cost_usd"] for x in rec["searches"])  # the baseline always searches; this agent never does
+    assert rec["cost_usd"] == pytest.approx(TURN_USD + search) == pytest.approx(ledger.run_usd) and rec["cost_usd"] > 0
+
+
+def test_run_that_raises_after_spending_still_records_the_spend(tmp_path, monkeypatch):
+    def spends_then_raises(url, tools, llm, ledger, categories):
+        ledger.charge(llm.model, 100, 50)
+        raise RuntimeError("boom")
+
+    monkeypatch.setitem(re_.SYSTEMS, "agent", spends_then_raises)
+    ledger = Ledger(per_run_cap=1.0, per_day_cap=10.0, path=tmp_path / "s.json")
+    rec = re_.run_one(CASES[0], "agent", 1, OneShotLLM(), ledger, LoggingTools(FakeTools()))
+    assert rec["outcome"] == "error" and "boom" in rec["error"]
+    assert rec["cost_usd"] == pytest.approx(TURN_USD) == pytest.approx(ledger.run_usd)
+
+
+def test_report_total_is_the_sum_of_recorded_spend(tmp_path):
+    _, runs = go(tmp_path, 1, llm=NoAnswerLLM())
+    text = re_.report(runs, CASES)
+    assert f"total recorded cost: {sum(r['cost_usd'] for r in runs):.4f} USD" in text and "lower bound" not in text

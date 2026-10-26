@@ -46,7 +46,9 @@ def run_one(case: EvalCase, system: str, repeat: int, llm, ledger, tools: Loggin
     t0 = time.monotonic()
     got = run_eval([case], runner, system, BACKEND, match=MATCH)
     wall = time.monotonic() - t0
-    return {**got.results[0], "repeat": repeat, "model": llm.model, "reason": stash.get("reason"),
+    # The ledger saw every model call and search charge, so it is the exact spend, also when the run errored
+    # or the runner raised (a failed result carries 0.0 then).
+    return {**got.results[0], "cost_usd": ledger.run_usd, "repeat": repeat, "model": llm.model, "reason": stash.get("reason"),
             "dropped_citations": [d if isinstance(d, str) else f"<{d.type_name}>" for d in stash.get("dropped", [])],
             "queries": [c["arg"][0] for c in tools.log if c["tool"] == "search_docs"],
             "tool_errors": [c["error"] for c in tools.log if c["error"]],
@@ -127,7 +129,7 @@ def report(runs: list[dict], cases: list[EvalCase]) -> str:
         c = compare(sel("agent", n), sel("baseline", n), cases)
         out += [f"repeat {n}: " + verdict(c["category"], "category"), f"repeat {n}: " + verdict(c["correct_doc"], "correct doc")]
     spend = sum(r["cost_usd"] for r in runs)
-    out.append(f"\ntotal recorded cost: {spend:.4f} USD (error runs record 0.0, so a lower bound)")
+    out.append(f"\ntotal recorded cost: {spend:.4f} USD (exact: the ledger's spend for every run, errors included)")
     return "\n".join(out)
 
 

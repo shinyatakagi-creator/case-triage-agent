@@ -64,7 +64,7 @@ def summarise(results: list[EvalResult], cases: list[EvalCase]) -> dict:
         "steps": _num([r["steps"] for r in ok]),
         "cost_usd": _num([r["cost_usd"] for r in ok]),
         "failed_count": len(bad),
-        # errored runs record cost 0.0, so this is a lower bound
+        # exact when the runner records the ledger's spend for failed runs (scripts/run_eval.py does)
         "failed_cost_usd_total": sum(r["cost_usd"] for r in bad),
         "failure_rate": _rate([r["failed"] for r, _ in rows]),
         "cant_tell_answerable": cant(ans),
