@@ -40,7 +40,7 @@ def run_one(case: EvalCase, system: str, repeat: int, llm, ledger, tools: Loggin
 
     def runner(c):
         res = SYSTEMS[system](c["issue_url"], tools, llm, ledger, list(CATEGORIES))
-        stash.update(reason=res["reason"], dropped=res["dropped_citations"])
+        stash.update(reason=res["reason"], dropped=res["dropped_citations"], note=res["note"])
         return res["note"], res["search_results"]
 
     t0 = time.monotonic()
@@ -49,6 +49,8 @@ def run_one(case: EvalCase, system: str, repeat: int, llm, ledger, tools: Loggin
     # The ledger saw every model call and search charge, so it is the exact spend, also when the run errored
     # or the runner raised (a failed result carries 0.0 then).
     return {**got.results[0], "cost_usd": ledger.run_usd, "repeat": repeat, "model": llm.model, "reason": stash.get("reason"),
+            "likely_cause": stash.get("note", {}).get("likely_cause"),
+            "next_step": stash.get("note", {}).get("next_step"),
             "dropped_citations": [d if isinstance(d, str) else f"<{d.type_name}>" for d in stash.get("dropped", [])],
             "queries": [c["arg"][0] for c in tools.log if c["tool"] == "search_docs"],
             "tool_errors": [c["error"] for c in tools.log if c["error"]],
@@ -83,10 +85,21 @@ def execute(cases, repeats, runs_path: Path, llm, make_ledger, make_tools=Loggin
 # --- report ------------------------------------------------------------------
 
 
-def _agg(per_repeat: list[tuple[float, str]], unit: str = "") -> str:
+def _agg(per_repeat: list[tuple[float, str]], unit: str = "", dec: int = 1) -> str:
     vals = [v for v, _ in per_repeat]
     detail = ", ".join(d for _, d in per_repeat)
-    return f"mean {statistics.mean(vals):.1f}{unit} (range {min(vals):.1f}-{max(vals):.1f}{unit}) per repeat: {detail}"
+    return (f"mean {statistics.mean(vals):.{dec}f}{unit} (range {min(vals):.{dec}f}-{max(vals):.{dec}f}{unit}) "
+            f"per repeat: {detail}")
+
+
+def answered_category(rs: list[dict], cases: list[EvalCase]) -> tuple[float, str] | None:
+    """Category accuracy among answerable cases the system answered (not cant_tell, not error); None if none."""
+    answerable = {c["id"] for c in cases if c["answerable"]}
+    ans = [r for r in rs if r["case_id"] in answerable and r["outcome"] == "answered"]
+    if not ans:
+        return None
+    k = sum(r["correct_category"] for r in ans)
+    return 100 * k / len(ans), f"{k}/{len(ans)}"
 
 
 def complete_repeats(runs: list[dict], cases: list[EvalCase]) -> list[int]:
@@ -107,14 +120,16 @@ def report(runs: list[dict], cases: list[EvalCase]) -> str:
     sel = lambda s, n: [r for r in runs if r["system"] == s and r["repeat"] == n]  # noqa: E731
     for system in SYSTEMS:
         sums = [summarise(sel(system, n), cases) for n in reps]
+        answered = [a for a in (answered_category(sel(system, n), cases) for n in reps) if a]
         pct = lambda key: [(s[key]["pct"], f"{s[key]['k']}/{s[key]['n']}") for s in sums]  # noqa: E731
         out += ["", f"== {system} ({len(reps)} repeat(s); rates are k/n per repeat, then mean and range of the %) ==",
                 "category accuracy, answerable:  " + _agg(pct("category_accuracy"), "%"),
                 "correct doc cited, answerable:  " + _agg(pct("correct_doc_cited"), "%"),
+                "category accuracy, answered only: " + (_agg(answered, "%") if answered else "n/a (no answered cases)"),
                 "can't tell, answerable:         " + _agg(pct("cant_tell_answerable"), "%"),
                 "can't tell, not answerable:     " + _agg(pct("cant_tell_unanswerable"), "%"),
                 "errors / failed runs:           " + _agg([(s["failed_count"], f"{s['failed_count']}/{s['n_cases']}") for s in sums]),
-                "cost per case (non-failed):     " + _agg([(s["cost_usd"]["mean"] or 0, f"{s['cost_usd']['mean'] or 0:.5f}") for s in sums], " USD"),
+                "cost per case (non-failed):     " + _agg([(s["cost_usd"]["mean"] or 0, f"{s['cost_usd']['mean'] or 0:.5f}") for s in sums], " USD", 4),
                 "steps per case (non-failed):    " + _agg([(s["steps"]["mean"] or 0, f"{s['steps']['mean'] or 0:.2f}") for s in sums])]
         rs = [r for n in reps for r in sel(system, n)]
         lat = [r["latency_s"] for r in rs]

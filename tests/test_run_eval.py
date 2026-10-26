@@ -126,3 +126,15 @@ def test_report_total_is_the_sum_of_recorded_spend(tmp_path):
     _, runs = go(tmp_path, 1, llm=NoAnswerLLM())
     text = re_.report(runs, CASES)
     assert f"total recorded cost: {sum(r['cost_usd'] for r in runs):.4f} USD" in text and "lower bound" not in text
+
+
+def test_run_record_has_likely_cause_and_next_step(tmp_path):
+    _, runs = go(tmp_path, 1)
+    assert all(r["likely_cause"] == "cause" and r["next_step"] == "step" for r in runs if r["outcome"] == "answered")
+
+
+def test_report_shows_4_decimal_cost_and_answered_only_category(tmp_path):
+    _, runs = go(tmp_path, 1)
+    text = re_.report(runs, CASES)
+    assert re.search(r"cost per case \(non-failed\):\s+mean 0\.000\d", text)
+    assert re.search(r"category accuracy, answered only:\s+mean \d+\.\d% .*: \d+/3", text)  # fake cases: 3 answerable

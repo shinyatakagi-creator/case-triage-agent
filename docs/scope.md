@@ -163,3 +163,30 @@ Sampling cannot be pinned with the installed anthropic SDK: `messages.create` ha
 ## Correct doc cited (decided 26 Oct)
 
 "Correct doc cited" means at least one gold doc is among the cited sources, with citations de-duplicated by source (`match="any"` in the eval runner). Only citations that `search_docs` returned in the same run count. It is scored on answerable cases only.
+
+## Results (26 Oct 2026)
+
+Source: `python -m scripts.run_eval --run-dir data/results/20261026-153314 --report-only`. Run dir `data/results/20261026-153314`: 40 cases (25 answerable, 15 not), agent and baseline, 3 repeats each, 240 runs, es backend, same model for both (claude-haiku-5-5), `match="any"`. Sampling is not pinned, so each cell is the mean over 3 repeats with the range, and k/n for each repeat. Total recorded cost 0.3481 USD. Every number below is copied from the report output.
+
+| Metric | Agent | Baseline |
+|---|---|---|
+| Category accuracy, answerable (25) | mean 72.0% (68.0-76.0%); 17/25, 19/25, 18/25 | mean 65.3% (64.0-68.0%); 16/25, 16/25, 17/25 |
+| Category accuracy, answered cases only | mean 81.8% (77.3-86.4%); 17/22, 19/22, 18/22 | mean 81.7% (80.0-85.0%); 16/20, 16/20, 17/20 |
+| Correct doc cited, answerable (25) | mean 77.3% (72.0-80.0%); 20/25, 20/25, 18/25 | mean 77.3% (76.0-80.0%); 19/25, 19/25, 20/25 |
+| Can't tell, answerable (25) | mean 12.0% (12.0-12.0%); 3/25 in each repeat | mean 20.0% (20.0-20.0%); 5/25 in each repeat |
+| Can't tell, not answerable (15) | mean 71.1% (66.7-80.0%); 10/15, 10/15, 12/15 | mean 88.9% (86.7-93.3%); 13/15, 13/15, 14/15 |
+| Failed runs (of 40 per repeat) | 0, 1, 0 | 0, 0, 0 |
+| Cost per case (non-failed) | mean 0.0020 USD (0.0019-0.0020) | mean 0.0009 USD (0.0009-0.0009) |
+| Steps per case | mean 3.2 (3.1-3.2) | 1.0 |
+| Wall latency per run | mean 8.61 s (4.69-20.15 s) | mean 4.78 s (2.32-9.32 s) |
+
+**Verdict: no clear difference, no win claimed.** The paired comparison per repeat (bootstrap CI plus exact sign test, both must agree) says "no clear difference" in all six comparisons (category and correct doc, three repeats). Category: agent-only vs baseline-only cases were 1 vs 0, 3 vs 0 and 1 vs 0 of 25 (sign-test p = 1.000, 0.250, 1.000). Correct doc: 2 vs 1, 2 vs 1 and 2 vs 4 of 25 (p = 1.000, 1.000, 0.688). The repeats reuse the same 25 cases, so they are not independent evidence. With 25 answerable cases a gap of two or three cases is noise.
+
+**Trade-off.** The agent answered more answerable cases (can't tell 3/25 vs 5/25) but abstained less on unanswerable ones (10-12 of 15 vs 13-14 of 15). It cost about 2.2x per case (0.0020 vs 0.0009 USD) and took about 1.8x the wall time (8.61 s vs 4.78 s); both ratios are computed from the figures in the table. Category accuracy among answered cases is the same for both (81.8% vs 81.7%), so the higher agent category accuracy over all answerable cases comes from answering more of them, not from classifying better.
+
+**Error analysis: unanswerable cases that were answered** (from `runs.jsonl` in the same run dir; the three repeats per case are in brackets).
+- Agent answered 128843 (3 of 3 repeats), 129846 (3 of 3), 129193 (2 of 3), 132437 (2 of 3) and 135490 (2 of 3 answered, 1 of 3 an error: no citations and no category). Cited pages, first repeat: 128843 `tasks/inject-data-application/define-command-argument-container`; 129193 `concepts/workloads/pods/pod-lifecycle` and `tasks/configure-pod-container/resize-pod-resources`; 129846 `tasks/administer-cluster/safely-drain-node` and `concepts/cluster-administration/node-shutdown`; 132437 `tasks/extend-kubernetes/custom-resources/custom-resource-definitions` and `concepts/overview/kubernetes-api`; 135490 `concepts/configuration/manage-resources-containers` and `tasks/configure-pod-container/assign-memory-resource`. The owner reads all of these as near-miss pages: related to the issue, but not the answer.
+- Baseline answered two of the same cases: 129846 (2 of 3) and 135490 (3 of 3).
+- The one error in 240 runs is the agent on 135490, repeat 2.
+
+**Limits.** 25 answerable and 15 unanswerable cases, one model (claude-haiku-5-5), the es backend only; the in-process backend has not been run. No prompt was tuned on these 40 issues. The cause of each answered-but-unanswerable case is the owner's reading, not an automated check.
