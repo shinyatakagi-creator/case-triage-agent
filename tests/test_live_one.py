@@ -30,7 +30,11 @@ def test_tool_descriptions():
     assert "replies from others are not included" in d["get_issue_thread"]
 
 
-def test_temperature_zero_is_sent(monkeypatch):
+def test_adapter_keywords_exist_in_the_installed_sdk(monkeypatch):
+    """A fake client hid an unsupported keyword once; check against the real signature, offline."""
+    import inspect
+
+    import anthropic
     monkeypatch.setenv("TRIAGE_ANTHROPIC_API_KEY", "test-key")
     llm = AnthropicLLM("claude-haiku-5-5")
     seen = {}
@@ -43,4 +47,5 @@ def test_temperature_zero_is_sent(monkeypatch):
     llm._client = type("C", (), {"messages": Msgs()})()
     with pytest.raises(RuntimeError):
         llm.complete("s", [], [])
-    assert seen["temperature"] == 0
+    params = inspect.signature(anthropic.Anthropic(api_key="x").messages.create).parameters
+    assert seen and set(seen) <= set(params), set(seen) - set(params)

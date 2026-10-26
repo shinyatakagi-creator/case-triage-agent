@@ -114,8 +114,7 @@ class AnthropicLLM:
 
     def complete(self, system: str, messages: list[dict], tools: list[dict]) -> Turn:
         r = self._client.messages.create(
-            model=self.model, max_tokens=self.max_tokens, system=system, messages=messages, tools=tools,
-            temperature=0,  # same for agent and baseline, so differences are not sampling noise
+            model=self.model, max_tokens=self.max_tokens, system=system, messages=messages, tools=tools
         )
         content = []
         for b in r.content:

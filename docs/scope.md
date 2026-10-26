@@ -155,3 +155,7 @@ Defined by the owner. Four categories, checked in this order; the first that mat
 4. `howto` (How-to or diagnosis): the user asks how to do something or how to find a cause, and the docs give the steps.
 
 Unanswerable cases get category `n/a`. Category accuracy is scored on answerable cases only. The owner's per-issue assignment is in `data/eval_staging/categories.json` (staging, not committed; 25 issues: 5 version_change, 3 config_error, 9 by_design, 8 howto).
+
+## Sampling (26 Oct)
+
+Sampling cannot be pinned with the installed anthropic SDK: `messages.create` has no `temperature` parameter (a live attempt failed on it before any request). So model output varies run to run. The eval runs each case 3 times per system (agent and baseline) and reports the mean and the range, with counts. The 3-run repeat is not implemented in the eval runner yet.

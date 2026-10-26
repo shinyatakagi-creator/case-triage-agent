@@ -299,14 +299,13 @@ def _text(x) -> str | None:
 
 
 def category_problems(outcome: Outcome, category, categories: list[str] | None) -> list[str]:
-    """answered needs a category from the set; cant_tell must have none. Skipped when no set was given."""
+    """answered needs a category from the set. Skipped when no set was given. (A category on cant_tell is
+    dropped in build_result, not a problem.)"""
     if not categories:
         return []
     if outcome == "answered" and category not in categories:
         shown = category[:40] if isinstance(category, str) else type(category).__name__  # never str() model junk
         return [f"outcome 'answered' with a missing or unknown category: {shown!r}"]
-    if outcome == "cant_tell" and category is not None:
-        return ["outcome 'cant_tell' with a category (must be omitted)"]
     return []
 
 
@@ -325,7 +324,7 @@ def build_result(issue_url: str, outcome: Outcome, runner: ToolRunner, steps: in
     category = final.get("category")
     note = TriageNote(
         issue_url=issue_url, outcome=outcome,
-        category=category if categories and category in categories else None,
+        category=category if outcome == "answered" and categories and category in categories else None,
         likely_cause=_text(final.get("likely_cause")),
         citations=[Citation(source=c) for c in valid],
         next_step=_text(final.get("next_step")),
@@ -339,6 +338,8 @@ def build_result(issue_url: str, outcome: Outcome, runner: ToolRunner, steps: in
     if runner.cost_overflow:
         note["outcome"] = "error"
         reason = "search costs overflowed the float range; note cost_usd is understated"
+    if outcome == "cant_tell" and category is not None and note["outcome"] == "cant_tell":
+        reason = "; ".join(filter(None, [reason, "category dropped: cant_tell must omit it"]))
     problems = contract_problems(note, runner.search_results) + category_problems(outcome, category, categories)
     if problems and note["outcome"] != "error":
         # e.g. "answered" whose citations were all invented: a failure, not a quiet downgrade to cant_tell

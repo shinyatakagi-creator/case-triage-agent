@@ -65,7 +65,7 @@ def test_final_answer_wins_over_other_blocks_in_same_turn(ledger):
     ("answered", (SRC,), {"category": "scheduling"}, "answered"),
     ("answered", (SRC,), {}, "error"),                            # category missing
     ("answered", (SRC,), {"category": "nonsense"}, "error"),      # not in the set
-    ("cant_tell", (), {"category": "scheduling"}, "error"),       # extra category
+    ("cant_tell", (), {"category": "scheduling"}, "cant_tell"),   # extra category is dropped, not an error
     ("cant_tell", (), {}, "cant_tell"),
 ])
 def test_category_rule(ledger, outcome, cites, extra, expect):
@@ -73,7 +73,11 @@ def test_category_rule(ledger, outcome, cites, extra, expect):
     res = run_agent(URL, FakeTools(), llm, ledger, ["scheduling"])
     assert res["note"]["outcome"] == expect
     if expect == "error":
-        assert "category" in res["reason"] and res["note"]["category"] is None
+        assert "category" in res["reason"]
+    if outcome == "cant_tell" and extra:
+        assert "category dropped" in res["reason"]
+    if expect != "answered":
+        assert res["note"]["category"] is None
 
 
 def test_no_category_rule_without_a_set(ledger):
