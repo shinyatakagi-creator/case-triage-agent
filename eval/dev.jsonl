@@ -1,0 +1,5 @@
+{"id": "k8s-127264", "issue_url": "https://github.com/kubernetes/kubernetes/issues/127264", "answerable": true, "category": "config_error", "gold_docs": ["tasks/debug/debug-cluster/audit"]}
+{"id": "k8s-126646", "issue_url": "https://github.com/kubernetes/kubernetes/issues/126646", "answerable": true, "category": "by_design", "gold_docs": ["concepts/workloads/pods/pod-condition", "concepts/workloads/pods/pod-qos"]}
+{"id": "k8s-126591", "issue_url": "https://github.com/kubernetes/kubernetes/issues/126591", "answerable": true, "category": "howto", "gold_docs": ["concepts/storage/volume-snapshots", "reference/labels-annotations-taints/_index"]}
+{"id": "k8s-129409", "issue_url": "https://github.com/kubernetes/kubernetes/issues/129409", "answerable": false, "category": "n/a", "gold_docs": []}
+{"id": "k8s-140898", "issue_url": "https://github.com/kubernetes/kubernetes/issues/140898", "answerable": false, "category": "n/a", "gold_docs": []}

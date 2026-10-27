@@ -6,9 +6,7 @@ An agent that takes a public kubernetes/kubernetes issue URL, investigates it wi
 
 ## Allowed claim
 
-> "Multi-step agent with MCP tool server, deployed, evaluated on 40 labelled cases against a single-shot baseline."
-
-The word "deployed" applies only once the service is deployed, which it is not yet. Until then the accurate claim is: multi-step agent with MCP tool server, evaluated on 40 labelled cases against a single-shot baseline.
+> Multi-step agent with MCP tool server, evaluated on 40 labelled cases against a single-shot baseline.
 
 ## Results
 
@@ -30,7 +28,7 @@ Source: `python -m scripts.run_eval --run-dir data/results/20261026-153314 --rep
 
 ## Limits
 
-25 answerable and 15 unanswerable cases, one model, the Elasticsearch backend only. With 25 answerable cases a gap of two or three cases is noise, and the three repeats reuse the same cases, so they are not independent evidence. The labels and category definitions are one person's judgement. The eval set, results and index are not in this repository (`data/` is not committed), so these numbers cannot be reproduced from a clone alone. The in-process retrieval backend (planned for the deployed build) matched Elasticsearch on rag-hybrid's 26 short eval questions, but the agent has not been run on it, and the build has not been deployed.
+25 answerable and 15 unanswerable cases, one model, the Elasticsearch backend only. With 25 answerable cases a gap of two or three cases is noise, and the three repeats reuse the same cases, so they are not independent evidence. The labels and category definitions are one person's judgement. The labelled set is included in [eval/](eval/) (40 eval cases and 5 dev cases: issue URL, answerable flag, category and gold doc ids, plus the category map). Issue text, run logs and the retrieval index are not in this repository (`data/` is not committed), so these numbers cannot be reproduced from a clone alone. The in-process retrieval backend (planned for the deployed build) matched Elasticsearch on rag-hybrid's 26 short eval questions, but the agent has not been run on it, and the build has not been deployed.
 
 ## Tests
 

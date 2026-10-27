@@ -1,0 +1,40 @@
+{"id": "k8s-141263", "issue_url": "https://github.com/kubernetes/kubernetes/issues/141263", "answerable": true, "category": "version_change", "gold_docs": ["concepts/workloads/controllers/deployment"]}
+{"id": "k8s-129436", "issue_url": "https://github.com/kubernetes/kubernetes/issues/129436", "answerable": true, "category": "version_change", "gold_docs": ["tasks/tools/install-kubectl-linux"]}
+{"id": "k8s-133884", "issue_url": "https://github.com/kubernetes/kubernetes/issues/133884", "answerable": true, "category": "version_change", "gold_docs": ["reference/instrumentation/cri-pod-container-metrics", "reference/instrumentation/cri-pod-container-metrics"]}
+{"id": "k8s-129135", "issue_url": "https://github.com/kubernetes/kubernetes/issues/129135", "answerable": true, "category": "version_change", "gold_docs": ["reference/using-api/deprecation-guide"]}
+{"id": "k8s-129924", "issue_url": "https://github.com/kubernetes/kubernetes/issues/129924", "answerable": true, "category": "version_change", "gold_docs": ["concepts/storage/volume-populators-and-data-sources", "concepts/storage/volume-populators-and-data-sources"]}
+{"id": "k8s-127694", "issue_url": "https://github.com/kubernetes/kubernetes/issues/127694", "answerable": true, "category": "config_error", "gold_docs": ["reference/access-authn-authz/authentication"]}
+{"id": "k8s-127991", "issue_url": "https://github.com/kubernetes/kubernetes/issues/127991", "answerable": true, "category": "config_error", "gold_docs": ["tasks/administer-cluster/dns-custom-nameservers", "tasks/administer-cluster/dns-debugging-resolution"]}
+{"id": "k8s-129597", "issue_url": "https://github.com/kubernetes/kubernetes/issues/129597", "answerable": true, "category": "config_error", "gold_docs": ["concepts/containers/images", "tasks/configure-pod-container/pull-image-private-registry"]}
+{"id": "k8s-128146", "issue_url": "https://github.com/kubernetes/kubernetes/issues/128146", "answerable": true, "category": "by_design", "gold_docs": ["reference/access-authn-authz/service-accounts-admin"]}
+{"id": "k8s-128312", "issue_url": "https://github.com/kubernetes/kubernetes/issues/128312", "answerable": true, "category": "by_design", "gold_docs": ["tasks/administer-cluster/safely-drain-node"]}
+{"id": "k8s-130610", "issue_url": "https://github.com/kubernetes/kubernetes/issues/130610", "answerable": true, "category": "by_design", "gold_docs": ["concepts/overview/kubernetes-api", "tasks/extend-kubernetes/custom-resources/custom-resource-definitions"]}
+{"id": "k8s-130683", "issue_url": "https://github.com/kubernetes/kubernetes/issues/130683", "answerable": true, "category": "by_design", "gold_docs": ["concepts/workloads/controllers/job"]}
+{"id": "k8s-131230", "issue_url": "https://github.com/kubernetes/kubernetes/issues/131230", "answerable": true, "category": "by_design", "gold_docs": ["concepts/workloads/pods/pod-lifecycle"]}
+{"id": "k8s-131734", "issue_url": "https://github.com/kubernetes/kubernetes/issues/131734", "answerable": true, "category": "by_design", "gold_docs": ["concepts/configuration/secret", "concepts/security/secrets-good-practices"]}
+{"id": "k8s-134287", "issue_url": "https://github.com/kubernetes/kubernetes/issues/134287", "answerable": true, "category": "by_design", "gold_docs": ["reference/config-api/kubelet-config.v1beta1", "concepts/cluster-administration/logging"]}
+{"id": "k8s-135519", "issue_url": "https://github.com/kubernetes/kubernetes/issues/135519", "answerable": true, "category": "by_design", "gold_docs": ["tasks/inject-data-application/define-environment-variable-via-file", "tasks/inject-data-application/define-environment-variable-via-file"]}
+{"id": "k8s-129167", "issue_url": "https://github.com/kubernetes/kubernetes/issues/129167", "answerable": true, "category": "by_design", "gold_docs": ["tasks/administer-cluster/configure-feature-gates", "reference/access-authn-authz/admission-controllers"]}
+{"id": "k8s-135321", "issue_url": "https://github.com/kubernetes/kubernetes/issues/135321", "answerable": true, "category": "howto", "gold_docs": ["tasks/tls/manual-rotation-of-ca-certificates", "tasks/tls/manual-rotation-of-ca-certificates"]}
+{"id": "k8s-130845", "issue_url": "https://github.com/kubernetes/kubernetes/issues/130845", "answerable": true, "category": "howto", "gold_docs": ["concepts/containers/images"]}
+{"id": "k8s-128301", "issue_url": "https://github.com/kubernetes/kubernetes/issues/128301", "answerable": true, "category": "howto", "gold_docs": ["concepts/scheduling-eviction/topology-spread-constraints"]}
+{"id": "k8s-132643", "issue_url": "https://github.com/kubernetes/kubernetes/issues/132643", "answerable": true, "category": "howto", "gold_docs": ["tasks/extend-kubernetes/configure-multiple-schedulers", "reference/scheduling/config"]}
+{"id": "k8s-127770", "issue_url": "https://github.com/kubernetes/kubernetes/issues/127770", "answerable": true, "category": "howto", "gold_docs": ["reference/config-api/client-authentication.v1", "reference/access-authn-authz/authentication"]}
+{"id": "k8s-130192", "issue_url": "https://github.com/kubernetes/kubernetes/issues/130192", "answerable": true, "category": "howto", "gold_docs": ["tasks/configure-pod-container/security-context", "tasks/configure-pod-container/security-context"]}
+{"id": "k8s-130611", "issue_url": "https://github.com/kubernetes/kubernetes/issues/130611", "answerable": true, "category": "howto", "gold_docs": ["tasks/debug/debug-application/debug-pods"]}
+{"id": "k8s-127380", "issue_url": "https://github.com/kubernetes/kubernetes/issues/127380", "answerable": true, "category": "howto", "gold_docs": ["concepts/scheduling-eviction/taint-and-toleration", "reference/node/node-status"]}
+{"id": "k8s-141240", "issue_url": "https://github.com/kubernetes/kubernetes/issues/141240", "answerable": false, "category": "n/a", "gold_docs": []}
+{"id": "k8s-129846", "issue_url": "https://github.com/kubernetes/kubernetes/issues/129846", "answerable": false, "category": "n/a", "gold_docs": []}
+{"id": "k8s-133402", "issue_url": "https://github.com/kubernetes/kubernetes/issues/133402", "answerable": false, "category": "n/a", "gold_docs": []}
+{"id": "k8s-131254", "issue_url": "https://github.com/kubernetes/kubernetes/issues/131254", "answerable": false, "category": "n/a", "gold_docs": []}
+{"id": "k8s-137874", "issue_url": "https://github.com/kubernetes/kubernetes/issues/137874", "answerable": false, "category": "n/a", "gold_docs": []}
+{"id": "k8s-141202", "issue_url": "https://github.com/kubernetes/kubernetes/issues/141202", "answerable": false, "category": "n/a", "gold_docs": []}
+{"id": "k8s-143094", "issue_url": "https://github.com/kubernetes/kubernetes/issues/143094", "answerable": false, "category": "n/a", "gold_docs": []}
+{"id": "k8s-130769", "issue_url": "https://github.com/kubernetes/kubernetes/issues/130769", "answerable": false, "category": "n/a", "gold_docs": []}
+{"id": "k8s-136175", "issue_url": "https://github.com/kubernetes/kubernetes/issues/136175", "answerable": false, "category": "n/a", "gold_docs": []}
+{"id": "k8s-132793", "issue_url": "https://github.com/kubernetes/kubernetes/issues/132793", "answerable": false, "category": "n/a", "gold_docs": []}
+{"id": "k8s-132437", "issue_url": "https://github.com/kubernetes/kubernetes/issues/132437", "answerable": false, "category": "n/a", "gold_docs": []}
+{"id": "k8s-128843", "issue_url": "https://github.com/kubernetes/kubernetes/issues/128843", "answerable": false, "category": "n/a", "gold_docs": []}
+{"id": "k8s-135490", "issue_url": "https://github.com/kubernetes/kubernetes/issues/135490", "answerable": false, "category": "n/a", "gold_docs": []}
+{"id": "k8s-133512", "issue_url": "https://github.com/kubernetes/kubernetes/issues/133512", "answerable": false, "category": "n/a", "gold_docs": []}
+{"id": "k8s-129193", "issue_url": "https://github.com/kubernetes/kubernetes/issues/129193", "answerable": false, "category": "n/a", "gold_docs": []}
