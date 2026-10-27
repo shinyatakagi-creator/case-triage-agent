@@ -5,6 +5,7 @@ import httpx
 from mcp.server.mcpserver import MCPServer
 
 from triage.contracts import Passage, SearchResult
+from triage.retrieval import inproc
 from triage.signals import extract_error_signals as _extract
 from triage.thread import (
     NotFound,
@@ -52,6 +53,8 @@ def normalise_search(raw: dict) -> SearchResult:
 def search_docs(query: str, k: int = 5) -> dict:
     """Search the Kubernetes docs (hybrid BM25 + kNN). Returns passages with citations."""
     try:
+        if os.environ.get("RETRIEVAL_BACKEND", "es") == "inproc":
+            return normalise_search(inproc.search(clean_query(query), k))
         r = httpx.post(
             f"{RAG_API_URL}/search",
             json={"query": clean_query(query), "mode": "hybrid", "k": k},
@@ -62,6 +65,8 @@ def search_docs(query: str, k: int = 5) -> dict:
     except httpx.TimeoutException:
         return {"error": "timeout", "tool": "search_docs"}
     except httpx.HTTPError as e:
+        return {"error": "search_failed", "detail": str(e)[:200]}
+    except RuntimeError as e:  # inproc: no index or no OPENAI_API_KEY
         return {"error": "search_failed", "detail": str(e)[:200]}
     except (KeyError, ValueError) as e:  # response not in the shape we checked on 25 Oct
         return {"error": "search_failed", "detail": f"unexpected /search response: {e!r}"[:200]}
