@@ -94,7 +94,7 @@ Verified (RAN):
 - rag-hybrid `/search`: bm25 and hybrid ran live and `search_docs` normalises both to `SearchResult`. Hybrid depends on rag-hybrid's OpenAI key (it was invalid once and was fixed).
 - Agent loop, baseline, ledger and eval harness: 215 unit tests pass, all on fakes and synthetic fixtures.
 - The `anthropic` package is installed and pinned (2.3.0); the adapter constructs a client offline.
-- In-process retrieval parity with Elasticsearch on rag-hybrid's 26 answerable questions (`scripts.parity`, run; real OpenAI embedding calls). Results in Retrieval parity.
+- Inproc hybrid parity: verified on rag-hybrid's 26 answerable questions only (`scripts.parity`, run; real OpenAI embedding calls). Results in Retrieval parity.
 
 Candidate pulls (25 Oct, script counts from `scripts.pull_candidates`, real GitHub API, read-only token). The "Maintainer reply" column and the maintainer-reply counts below were computed under the OLD leakage rule (OWNER/MEMBER/COLLABORATOR only) and are superseded; the script now reports "has reply by someone else", and the pulls need re-running to get that stat. "Substantive" means body >= 200 chars and at least one human comment by someone else. It does NOT mean the docs answer the issue; that is only known after labelling.
 
@@ -119,7 +119,9 @@ Not verified:
 - Candidate pulls for the unanswerable pool exist (bug+support 60, bug 40, feature 40, as script counts), but no issue has been read, selected or labelled, so the 15 unanswerable cases are not chosen yet.
 - Whether the docs index (kubernetes/website 6c42e266) predates the pulled issues enough to mislabel answerable cases.
 - Elastic Cloud trial terms and pricing (not chosen; fallback only).
-- Whether in-process retrieval matches the Elasticsearch numbers on issue-style queries: parity was measured on rag-hybrid's 26 short eval questions only (see Retrieval parity). The agent has not been run on the inproc backend, and the deployed build (Docker image) has not been built or run.
+- Agent on inproc: not run. No agent or baseline run has used `RETRIEVAL_BACKEND=inproc`.
+- Whether in-process retrieval matches the Elasticsearch numbers on issue-style (long) queries: parity was measured on rag-hybrid's 26 short eval questions only (see Retrieval parity).
+- The deployed build (Docker image with the inproc backend) has not been built or run.
 
 ## Findings 25 Oct
 
