@@ -94,6 +94,7 @@ Verified (RAN):
 - rag-hybrid `/search`: bm25 and hybrid ran live and `search_docs` normalises both to `SearchResult`. Hybrid depends on rag-hybrid's OpenAI key (it was invalid once and was fixed).
 - Agent loop, baseline, ledger and eval harness: 215 unit tests pass, all on fakes and synthetic fixtures.
 - The `anthropic` package is installed and pinned (2.3.0); the adapter constructs a client offline.
+- In-process retrieval parity with Elasticsearch on rag-hybrid's 26 answerable questions (`scripts.parity`, run; real OpenAI embedding calls). Results in Retrieval parity.
 
 Candidate pulls (25 Oct, script counts from `scripts.pull_candidates`, real GitHub API, read-only token). The "Maintainer reply" column and the maintainer-reply counts below were computed under the OLD leakage rule (OWNER/MEMBER/COLLABORATOR only) and are superseded; the script now reports "has reply by someone else", and the pulls need re-running to get that stat. "Substantive" means body >= 200 chars and at least one human comment by someone else. It does NOT mean the docs answer the issue; that is only known after labelling.
 
@@ -118,7 +119,7 @@ Not verified:
 - Candidate pulls for the unanswerable pool exist (bug+support 60, bug 40, feature 40, as script counts), but no issue has been read, selected or labelled, so the 15 unanswerable cases are not chosen yet.
 - Whether the docs index (kubernetes/website 6c42e266) predates the pulled issues enough to mislabel answerable cases.
 - Elastic Cloud trial terms and pricing (not chosen; fallback only).
-- Whether in-process retrieval matches the Elasticsearch numbers (parity check, evening 7).
+- Whether in-process retrieval matches the Elasticsearch numbers on issue-style queries: parity was measured on rag-hybrid's 26 short eval questions only (see Retrieval parity). The agent has not been run on the inproc backend, and the deployed build (Docker image) has not been built or run.
 
 ## Findings 25 Oct
 
@@ -190,3 +191,25 @@ Source: `python -m scripts.run_eval --run-dir data/results/20261026-153314 --rep
 - The one error in 240 runs is the agent on 135490, repeat 2.
 
 **Limits.** 25 answerable and 15 unanswerable cases, one model (claude-haiku-5-5), the es backend only; the in-process backend has not been run. No prompt was changed after seeing eval results; all prompt changes came from the 5 dev issues before the eval run. The category definitions were drafted by the labeller while labelling the 25 answerable eval issues, and the same definitions were used for both labels and prompts. The cause of each answered-but-unanswerable case is the owner's reading, not an automated check.
+
+## Retrieval parity
+
+Run with `python -m scripts.parity` against rag-hybrid's 26 answerable eval questions (`eval/golden.jsonl`, the 4 unanswerable ones excluded), k=5, heading chunker, hybrid and BM25-only. "Top 5" means the 5 chunks the agent would receive; a question is a hit if any of them is on a gold doc. MRR is over distinct docs. rag-hybrid's own numbers collapse to distinct docs before cutting at k, so they can differ slightly from these.
+
+| Mode | Backend | Gold doc in top 5 | MRR |
+|---|---|---|---|
+| BM25 only | es | 15/26 | 0.494 |
+| BM25 only | inproc | 15/26 | 0.487 |
+| Hybrid | es | 18/26 | 0.599 |
+| Hybrid | inproc | 18/26 | 0.599 |
+
+- BM25 only: rank-1 chunk identical on 26/26 questions, top-5 chunk overlap 0.969 (top-5 doc overlap 0.962).
+- Hybrid: top-5 doc overlap 1.000 and top-5 chunk overlap 1.000, rank-1 chunk identical on 26/26.
+- Query-embedding cost for the 26 hybrid queries on inproc: $0.000014.
+
+Where inproc differs from Elasticsearch:
+- Tokenizer: a regex approximation of the standard tokenizer's Unicode word breaking, plus Porter stemming and the Lucene English stop list for `content`. It is the likely cause of the small BM25-only gap.
+- Dense search: exact brute-force cosine, where ES uses approximate quantized HNSW (`bbq_hnsw`).
+- Hybrid results were identical despite both differences, on these 26 questions.
+
+Limits: 26 short, hand-written questions on one corpus snapshot (kubernetes/website 6c42e266), not issue-length queries. Identical results here do not show identical results on the 40 eval issues. The agent itself has not been run on inproc. The BM25 gap is small but nonzero, and the identical hybrid result is a measurement on this set, not a guarantee.
