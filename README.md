@@ -39,6 +39,15 @@ python -m venv .venv && .venv/bin/pip install -r requirements.txt
 
 The tests use fakes and recorded fixtures; they make no live calls.
 
+## Retrieval parity (optional, needs a local rag-hybrid)
+
+```
+python -m scripts.export_index        # local Elasticsearch -> data/index/
+python -m scripts.parity --golden <rag-hybrid>/eval/golden.jsonl   # or set RAG_GOLDEN
+```
+
+The hybrid comparison embeds 26 queries and needs `TRIAGE_OPENAI_API_KEY` in the environment (under $0.01); without it only the BM25-only comparison runs.
+
 ## NOTICE
 
 The retrieval index is built from the Kubernetes documentation, © The Kubernetes Authors, licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) (source: [kubernetes/website](https://github.com/kubernetes/website), commit `6c42e266`). The index is not included in this repository; cited passages in the agent's output are excerpts of that documentation.

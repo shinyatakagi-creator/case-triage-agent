@@ -196,7 +196,7 @@ Source: `python -m scripts.run_eval --run-dir data/results/20261026-153314 --rep
 
 ## Retrieval parity
 
-Run with `python -m scripts.parity` against rag-hybrid's 26 answerable eval questions (`eval/golden.jsonl`, the 4 unanswerable ones excluded), k=5, heading chunker, hybrid and BM25-only. "Top 5" means the 5 chunks the agent would receive; a question is a hit if any of them is on a gold doc. MRR is over distinct docs. rag-hybrid's own numbers collapse to distinct docs before cutting at k, so they can differ slightly from these.
+Run with `python -m scripts.parity --golden <rag-hybrid>/eval/golden.jsonl` (or set `RAG_GOLDEN`; needs `TRIAGE_OPENAI_API_KEY` for the hybrid part) against rag-hybrid's 26 answerable eval questions (`eval/golden.jsonl`, the 4 unanswerable ones excluded), k=5, heading chunker, hybrid and BM25-only. "Top 5" means the 5 chunks the agent would receive; a question is a hit if any of them is on a gold doc. MRR is over distinct docs. rag-hybrid's own numbers collapse to distinct docs before cutting at k, so they can differ slightly from these.
 
 | Mode | Backend | Gold doc in top 5 | MRR |
 |---|---|---|---|

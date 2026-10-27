@@ -1,6 +1,6 @@
 """Run rag-hybrid's answerable golden questions through both backends and compare.
 
-    python -m scripts.parity [--golden PATH] [--k 5]
+    python -m scripts.parity --golden PATH/TO/rag-hybrid/eval/golden.jsonl [--k 5]   (or set RAG_GOLDEN)
 
 es = rag-hybrid /search on localhost (hybrid, heading chunker); inproc = triage.retrieval.inproc.
 "Top 5" is the top-k CHUNKS as the agent receives them; a doc counts as hit if any of them is a gold doc.
@@ -16,7 +16,7 @@ import httpx
 
 from triage.retrieval import inproc
 
-GOLDEN = "/Users/shinya/Shinya's Project/rag-hybrid-search-build-guide/rag-hybrid/eval/golden.jsonl"
+GOLDEN_ENV = "RAG_GOLDEN"
 RAG_API_URL = os.environ.get("RAG_API_URL", "http://127.0.0.1:8000")
 
 
@@ -55,10 +55,17 @@ def report(name: str, a: list[list[dict]], b: list[list[dict]], gold: list[set[s
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--golden", default=GOLDEN)
+    ap.add_argument("--golden", help=f"path to rag-hybrid's eval/golden.jsonl (or set {GOLDEN_ENV})")
     ap.add_argument("--k", type=int, default=5)
     a = ap.parse_args(argv)
-    qs = [q for q in map(json.loads, Path(a.golden).read_text().splitlines()) if q["answerable"]]
+    golden = a.golden or os.environ.get(GOLDEN_ENV)
+    if not golden:
+        ap.error(f"no golden file: pass --golden PATH or set {GOLDEN_ENV}")
+    try:
+        lines = Path(golden).read_text().splitlines()
+    except OSError as e:
+        ap.error(f"cannot read golden file {golden!r}: {e.strerror}")
+    qs = [q for q in map(json.loads, lines) if q["answerable"]]
     gold = [set(q["expected_doc_ids"]) for q in qs]
     texts = [server_clean(q["question"]) for q in qs]
 
