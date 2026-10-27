@@ -5,7 +5,7 @@
 es = rag-hybrid /search on localhost (hybrid, heading chunker); inproc = triage.retrieval.inproc.
 "Top 5" is the top-k CHUNKS as the agent receives them; a doc counts as hit if any of them is a gold doc.
 rag-hybrid's own metrics collapse to distinct docs first, so its published numbers can differ slightly.
-The BM25-only block needs no OPENAI_API_KEY (no query embedding) and isolates the tokenizer/scoring port.
+The BM25-only block needs no TRIAGE_OPENAI_API_KEY (no query embedding) and isolates the tokenizer/scoring port.
 """
 import argparse
 import json
@@ -64,8 +64,8 @@ def main(argv=None) -> int:
 
     report(f"BM25 only, k={a.k}", [es_search(t, "bm25", a.k) for t in texts], [inproc_bm25(t, a.k) for t in texts], gold)
 
-    if not os.environ.get("OPENAI_API_KEY"):
-        print("\nHYBRID NOT RUN: OPENAI_API_KEY is not set (inproc needs it to embed the 26 queries)")
+    if not os.environ.get(inproc.KEY_VAR):
+        print(f"\nHYBRID NOT RUN: {inproc.KEY_VAR} is not set (inproc needs it to embed the 26 queries)")
         return 2
     es_h = [es_search(t, "hybrid", a.k) for t in texts]
     ip_raw = [inproc.search(t, a.k) for t in texts]

@@ -71,7 +71,7 @@ def test_search_returns_the_search_shape_and_caches_the_embedding(monkeypatch):
         def raise_for_status(self): pass
         def json(self): return {"data": [{"embedding": [1, 0, 0]}], "usage": {"total_tokens": 10}}
 
-    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    monkeypatch.setenv("TRIAGE_OPENAI_API_KEY", "k")
     monkeypatch.setattr(inproc.httpx, "post", lambda *a, **kw: calls.append(1) or R())
     first = inproc.search("pods running", 3)
     second = inproc.search("pods running", 3)
@@ -95,7 +95,37 @@ def test_backend_switch(monkeypatch):
 
 def test_inproc_failures_are_error_dicts(monkeypatch):
     monkeypatch.setenv("RETRIEVAL_BACKEND", "inproc")
-    monkeypatch.setattr(inproc, "search", lambda q, k: (_ for _ in ()).throw(RuntimeError("OPENAI_API_KEY is not set")))
+    monkeypatch.setattr(inproc, "search", lambda q, k: (_ for _ in ()).throw(RuntimeError("TRIAGE_OPENAI_API_KEY is not set")))
     assert server.search_docs("q")["error"] == "search_failed"
     monkeypatch.setattr(inproc, "search", lambda q, k: (_ for _ in ()).throw(server.httpx.ReadTimeout("t")))
     assert server.search_docs("q") == {"error": "timeout", "tool": "search_docs"}
+
+
+def test_embed_query_sends_the_triage_key_explicitly(monkeypatch):
+    monkeypatch.setattr(inproc, "_cache", {})
+    monkeypatch.setenv("TRIAGE_OPENAI_API_KEY", "triage-secret")
+    monkeypatch.setenv("OPENAI_API_KEY", "other-secret")
+    seen = {}
+
+    class R:
+        def raise_for_status(self): pass
+        def json(self): return {"data": [{"embedding": [1, 0, 0]}], "usage": {"total_tokens": 1}}
+
+    monkeypatch.setattr(inproc.httpx, "post", lambda url, headers, **kw: seen.update(headers) or R())
+    inproc.embed_query("q")
+    assert seen["Authorization"] == "Bearer triage-secret"
+
+
+def test_missing_triage_key_fails_naming_the_variable_and_ignores_openai_api_key(monkeypatch):
+    monkeypatch.setattr(inproc, "_cache", {})
+    monkeypatch.delenv("TRIAGE_OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "other-secret")  # must not be used as a fallback
+    monkeypatch.setattr(inproc.httpx, "post", lambda *a, **kw: pytest.fail("no request without the key"))
+    with pytest.raises(RuntimeError) as e:
+        inproc.embed_query("q")
+    assert "TRIAGE_OPENAI_API_KEY" in str(e.value) and "other-secret" not in str(e.value)
+    # through the tool: an error dict that names the variable and leaks nothing
+    monkeypatch.setattr(inproc, "_index", object())
+    monkeypatch.setenv("RETRIEVAL_BACKEND", "inproc")
+    out = server.search_docs("q")
+    assert out["error"] == "search_failed" and "TRIAGE_OPENAI_API_KEY" in out["detail"] and "other-secret" not in str(out)

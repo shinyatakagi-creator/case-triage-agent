@@ -21,7 +21,8 @@ RRF_K = 60
 CHUNKER = "heading"
 BOOST = {"title": 2.0, "heading_path": 1.5, "content": 1.0}
 K1, B = 1.2, 0.75  # Lucene BM25 defaults
-EMBED_URL = "https://api.openai.com/v1/embeddings"
+KEY_VAR = "TRIAGE_OPENAI_API_KEY"
+EMBED_URL ="https://api.openai.com/v1/embeddings"
 EMBED_USD_PER_TOKEN = 0.02 / 1e6  # text-embedding-3-small
 INDEX_DIR = Path(os.environ.get("INDEX_DIR", "data/index"))
 
@@ -150,9 +151,9 @@ def embed_query(query: str) -> tuple[np.ndarray, float, bool]:
     """(vector, cost_usd of this call, cache_hit). Errors propagate as httpx exceptions for the server to map."""
     if query in _cache:
         return _cache[query][0], 0.0, True
-    key = os.environ.get("OPENAI_API_KEY")
+    key = os.environ.get(KEY_VAR)  # deliberately not OPENAI_API_KEY: this project's spend uses its own key
     if not key:
-        raise RuntimeError("OPENAI_API_KEY is not set")
+        raise RuntimeError(f"{KEY_VAR} is not set")
     r = httpx.post(EMBED_URL, headers={"Authorization": f"Bearer {key}"}, timeout=15.0,
                    json={"model": "text-embedding-3-small", "input": query})
     r.raise_for_status()

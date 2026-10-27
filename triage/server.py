@@ -66,7 +66,7 @@ def search_docs(query: str, k: int = 5) -> dict:
         return {"error": "timeout", "tool": "search_docs"}
     except httpx.HTTPError as e:
         return {"error": "search_failed", "detail": str(e)[:200]}
-    except RuntimeError as e:  # inproc: no index or no OPENAI_API_KEY
+    except RuntimeError as e:  # inproc: no index or no TRIAGE_OPENAI_API_KEY
         return {"error": "search_failed", "detail": str(e)[:200]}
     except (KeyError, ValueError) as e:  # response not in the shape we checked on 25 Oct
         return {"error": "search_failed", "detail": f"unexpected /search response: {e!r}"[:200]}
